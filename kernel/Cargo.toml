@@ -1,0 +1,13 @@
+[package]
+name = "stock"
+description = "The Tally OS microkernel"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "stock"
+test = false
+bench = false
+
+[dependencies]

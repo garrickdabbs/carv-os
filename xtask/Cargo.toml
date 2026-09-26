@@ -1,0 +1,8 @@
+[package]
+name = "xtask"
+description = "Build tasks for Tally OS (cargo xtask ...)"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
