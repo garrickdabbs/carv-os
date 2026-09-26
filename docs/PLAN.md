@@ -67,6 +67,8 @@ with the data it changes. Each pillar strengthens the others:
 | Image | ISO via `xorriso` + Limine; data disk as raw `.img` | Standard Limine workflow. |
 | CI | GitHub Actions, QEMU (KVM if `/dev/kvm` exists, otherwise TCG) | Every PR boots the OS and runs the tests. |
 | License | Suggest MIT OR Apache-2.0 (Rust convention); maintainer decides | |
+| Release artifacts | ISO + data image + kernel ELF, `SHA256SUMS`, CycloneDX SBOM, Sigstore keyless signature, SLSA provenance attestation | Verifiable downloads with no long-lived signing keys to protect. See §7.5. |
+| Supply chain | Dependabot, `cargo deny`/`audit`/`vet`, SHA-pinned actions, least-privilege workflow permissions | An OS that fixes ambient authority shouldn't ship with ambient authority in its build pipeline. See §7.3. |
 
 ---
 
@@ -211,8 +213,24 @@ with `E_BUDGET` when the budget is used up.
 
 ```
 tally/
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml             # per-PR: lint, host tests, kernel + integration tests in QEMU, all-green gate
+│   │   ├── nightly.yml        # fuzz, Miri, audit, geiger, stress loops, toolchain drift, nightly pre-release
+│   │   ├── release.yml        # tag v* → reproducible ISO, tests, SBOM, Sigstore signature, attestation, Release
+│   │   ├── codeql.yml         # code scanning (public repo)
+│   │   └── scorecard.yml      # OpenSSF Scorecard (public repo)
+│   ├── dependabot.yml         # cargo + github-actions, weekly, grouped
+│   ├── release.yml            # release-notes categories by task prefix
+│   ├── CODEOWNERS
+│   ├── PULL_REQUEST_TEMPLATE.md
+│   └── ISSUE_TEMPLATE/        # task.yml, bug.yml, adr.yml
 ├── CLAUDE.md                  # agent rules (see that file)
 ├── README.md
+├── CHANGELOG.md               # Keep-a-Changelog; every PR adds an Unreleased line
+├── SECURITY.md                # disclosure process; "hobby OS, no guarantees"
+├── LICENSE
+├── deny.toml                  # cargo-deny: advisories, license allow-list, bans, sources
 ├── docs/
 │   ├── PLAN.md                # this document
 │   ├── adr/                   # Architecture Decision Records: NNNN-title.md
@@ -220,7 +238,7 @@ tally/
 │   └── vstore-format.md       # on-disk format spec
 ├── rust-toolchain.toml        # pinned nightly + rust-src, llvm-tools
 ├── .cargo/config.toml
-├── xtask/                     # cargo xtask build|image|run|test|fmt|lint
+├── xtask/                     # cargo xtask build|image|run|test|gdb|release-check
 ├── kernel/                    # "stock": the microkernel (bin, x86_64-unknown-none)
 ├── crates/                    # no_std libraries, host-testable with `cargo test`
 │   ├── tally-abi/             # syscall numbers, message layouts, error codes (shared)
@@ -292,15 +310,145 @@ qemu-system-x86_64 -machine q35 -cpu max -m 512M -enable-kvm \
 **Crash-consistency test:** the harness kills QEMU at random points during write-heavy
 workloads, reboots, and checks that vstore mounts at a consistent commit.
 
-**CI (`.github/workflows/ci.yml`):** fmt, clippy (`-D warnings`), host tests, kernel tests,
-integration tests; upload the serial log as an artifact when something fails. The `main` branch is
-protected and requires green CI.
+**CI:** every layer runs on GitHub Actions; the workflows, security controls, nightly jobs, and
+release pipeline are specified in §7.
 
 **Single command:** `cargo xtask test` runs layers 1–3. Agents must run it before claiming a task is done.
 
 ---
 
-## 7. Phased Roadmap
+## 7. GitHub Build, Security & Release Infrastructure
+
+Everything the OS needs from GitHub to go from a PR to a signed, bootable release. This is
+infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and hardened in Phase 9
+(P9.6, P9.7). All workflow files live under `.github/` (layout in §4).
+
+### 7.1 Repository governance
+- **Ruleset on `main`** (Settings → Rules): require a pull request, require the `all-green` status
+  check, require linear history, block force-pushes and deletion, require conversation resolution.
+  Set **"do not allow bypass"** so even the maintainer merges through CI. Solo maintainer: approvals
+  are *not* required (you'd be approving your own PRs), CI is the gate.
+- **Agent credentials.** Agents run on the maintainer's machine using the maintainer's `gh` login,
+  which has admin rights. Give agents a **fine-grained PAT** (or a GitHub App) scoped to this repo
+  with only `contents: write` and `pull_requests: write`, no admin. Rulesets then bind agents
+  mechanically: they can push branches and open PRs but can never merge to `main` without CI.
+- **`CODEOWNERS`:** `kernel/`, `crates/tally-abi/`, `docs/abi.md`, `docs/adr/`, `.github/`, `deny.toml`
+  → maintainer. Changes there get a review request automatically.
+- **Templates:** PR template (task ID, AC checklist, pasted `cargo xtask test` output, unsafe-block
+  count delta); issue templates for *task*, *bug (with serial log)*, and *ADR proposal*.
+- **Labels & board:** `phase:P0`…`phase:P10`, `area:kernel|services|userland|crates|infra`,
+  `kind:task|bug|adr|security`. One GitHub Issue per task ID, mirrored on a Project board with
+  columns *Backlog → In progress → In review → Done*. The §11 status table summarizes the board.
+- **PR titles** are `<TaskID>: <title>` (e.g. `P2.7: IPC send/recv/call`); the release notes
+  generator groups by that prefix.
+
+### 7.2 Build CI — `.github/workflows/ci.yml`
+Triggers: `pull_request`, `push` to `main`, `merge_group`, `workflow_dispatch`.
+`concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }` for PRs.
+
+| Job | What it does | Timeout |
+|---|---|---|
+| `lint` | `cargo fmt --check`; `cargo clippy --all-targets -D warnings` for host crates *and* `-p stock --target x86_64-unknown-none`; `cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`; `cargo deny check` | 10 min |
+| `host-tests` | `cargo nextest run --workspace --locked` (layer 1), JUnit report uploaded and summarized in `$GITHUB_STEP_SUMMARY` | 15 min |
+| `kernel-tests` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask test --kernel` (layer 2) | 20 min |
+| `integration` | `cargo xtask test --integration` (layer 3); uploads `target/serial.log`, `qemu.log`, and the ISO on failure | 30 min |
+| `image` (push to `main` only) | `cargo xtask image --release`; uploads `tally-<sha>.iso` as a 7-day artifact so the maintainer can boot the latest `main` | 15 min |
+| `all-green` | `needs:` every job above, `if: always()`, fails if any dependency failed or was cancelled. **This is the only required status check**, so adding jobs never means touching the ruleset. | 1 min |
+
+Details:
+- **Toolchain** comes from `rust-toolchain.toml` (`dtolnay/rust-toolchain` reads it), so CI and
+  laptops always agree. `--locked` everywhere; `Cargo.lock` is committed.
+- **Caching:** `Swatinem/rust-cache` keyed on the lockfile and toolchain; Limine binaries are fetched
+  by **pinned release tag + SHA-256** that `xtask` verifies before use (never "latest").
+- **KVM on GitHub-hosted Linux runners** (nested virtualization is available on `ubuntu-latest`):
+  ```
+  echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+  sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+  ```
+  `xtask` still falls back to TCG (`-accel tcg`) when `/dev/kvm` is missing and scales test
+  timeouts ×4, so the suite also passes on forks and other CI.
+- **Every QEMU run has a hard timeout** (`timeout` in xtask *and* `timeout-minutes` on the job).
+  A hang is a failure, never a retry. No automatic re-runs: flaky tests get fixed, not retried.
+- **Reproducible builds** (P9.6): release profile sets `strip = "debuginfo"` on the ISO copy,
+  `--remap-path-prefix`, `SOURCE_DATE_EPOCH` from the commit date, and `xorriso`
+  `-volume_date all =<epoch>`; a CI job builds twice on different runners and asserts identical
+  ISO hashes.
+- **Self-hosted runner:** *not* used. Your Fedora box would be faster (real KVM), but a self-hosted
+  runner on a public repo executes PR code from anyone who forks. Stay on GitHub-hosted runners.
+
+### 7.3 Security
+| Control | Tool / setting | Where |
+|---|---|---|
+| Dependency updates | **Dependabot** for `cargo` and `github-actions`, weekly, grouped minor/patch | `.github/dependabot.yml` |
+| Vulnerable / unlicensed / duplicate deps | **`cargo deny`** (`advisories`, `licenses` allow-list: MIT, Apache-2.0, BSD-2/3, ISC, Zlib, Unicode-3.0; `bans` on duplicate versions; `sources` = crates.io only) | `deny.toml`, `lint` job |
+| Fresh advisories without a code change | **`cargo audit`** on the nightly schedule (advisory DB moves even when code doesn't) | `nightly.yml` |
+| Unsafe-code discipline (mechanizes the CLAUDE.md rule) | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(unsafe_op_in_unsafe_fn)]` in every crate; `cargo geiger` unsafe-count report posted to the PR summary; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `tally-rt` | crate roots, `lint` job |
+| Undefined behaviour in host-testable code | **Miri**: `cargo miri test` on the pure crates (`tally-caps`, `tally-value`, `tally-vstore-core`, `tally-budget`) | `nightly.yml` |
+| Fuzzing (P9.3) | `cargo fuzz` for 20 min per target nightly; corpus cached as an artifact; a crash uploads the input and opens/updates an issue labeled `kind:security` | `nightly.yml` |
+| Actions supply chain | Every action pinned to a **full commit SHA** (Dependabot bumps them); top-level `permissions: contents: read`, elevated per job only (`id-token: write`, `attestations: write`, `contents: write` for release); no long-lived secrets anywhere, signing is keyless via OIDC | all workflows |
+| Static analysis | **CodeQL** code scanning with the Rust extractor; **OpenSSF Scorecard** workflow with a README badge, target ≥ 7 by Phase 9 | `codeql.yml`, `scorecard.yml` |
+| Secrets & reporting | Secret scanning + push protection; Dependabot alerts; **private vulnerability reporting** enabled; `SECURITY.md` with the disclosure process and a plain statement that this is a hobby OS with no security guarantees | repo settings, `SECURITY.md` |
+| Kernel hardening tests | W^X, guard pages, SMEP/SMAP, user/kernel isolation each have an in-kernel test that CI runs (P9.4) | `kernel-tests` job |
+| Threat model | `docs/threat-model.md` (P9.5) lists assets, trust boundaries (kernel ↔ services ↔ user programs ↔ network), and which controls above cover each threat | `docs/` |
+
+**Visibility note:** CodeQL, secret scanning push protection, and Scorecard are **free only for
+public repositories**. While the repo is private, Dependabot and `cargo deny`/`audit` still work;
+the rest activates when the repo goes public (recommended once Phase 0 lands).
+
+### 7.4 Test infrastructure on GitHub
+- **Per-PR:** layers 1–3 (§6) via `ci.yml`. Integration tests talk to the shell in `--json` mode so
+  assertions are exact. Failures always upload the serial log, QEMU log, and the ISO that failed.
+- **Nightly — `.github/workflows/nightly.yml`** (`schedule: cron '0 6 * * *'` + `workflow_dispatch`):
+  long-running and drift-detecting jobs that are too slow or too noisy for PRs:
+  - crash-consistency loop: 200 randomized kill-and-recover cycles against `vstore`
+  - fuzzing (20 min/target), Miri, `cargo audit`, `cargo geiger`
+  - **toolchain drift:** build and test with `nightly` (unpinned) and `beta` so a future toolchain
+    bump has no surprises; failures here are informational (`continue-on-error`)
+  - a stress boot: 50 consecutive boots must all reach the shell (catches races)
+  - On failure the workflow creates or updates a single pinned issue **"Nightly is failing"**
+    with links to the run, and closes it when green again.
+- **Test reporting:** `cargo-nextest` emits JUnit for host tests; the QEMU harness emits the same
+  format for kernel and integration tests; both are rendered into the job summary and kept as
+  artifacts for 30 days so regressions can be diffed.
+- **Coverage:** `cargo llvm-cov` on the pure crates only (kernel coverage isn't practical); reported
+  in the summary, no hard threshold, trend tracked in the nightly issue.
+- **Hermetic tests:** integration tests that need internet (`P8.4` DNS) are marked
+  `#[ignore = "needs-network"]` and run only in nightly with `--include-ignored`.
+
+### 7.5 Releases — `.github/workflows/release.yml`
+- **Versioning:** SemVer `0.y.z` while pre-1.0; the single source is `[workspace.package] version`.
+  `cargo xtask release-check` fails if the git tag ≠ Cargo version or `CHANGELOG.md` lacks an entry.
+- **Cadence:** tagged releases at milestones: `v0.1.0` boots to serial banner (end of Phase 0),
+  `v0.2.0` MVP 1 "Hello, Tally" (Phase 6), `v0.3.0` MVP 2 (Phase 8), `v0.4.0` hardening (Phase 9).
+  Plus a rolling **`nightly` pre-release** re-tagged by `nightly.yml` when it is green, so there is
+  always a bootable image of the latest `main`.
+- **Changelog:** `CHANGELOG.md` in Keep-a-Changelog format. Each PR adds a line under
+  *Unreleased*; the release PR moves it under the version heading. Release notes are generated
+  from merged PR titles grouped by task prefix (`gh release create --generate-notes` +
+  `.github/release.yml` categories).
+- **Release flow** (triggered by pushing a `v*` tag, which only the maintainer can do because tag
+  creation is covered by the ruleset):
+  1. `release-check`, then a **reproducible** `cargo xtask image --release`
+  2. run the **full test suite against the exact release artifacts** (not a rebuild)
+  3. boot-smoke: boot the release ISO under QEMU and require the banner and a shell prompt
+  4. produce artifacts: `tally-v0.y.z-x86_64.iso`, `tally-v0.y.z-data.img.zst`,
+     `stock-v0.y.z.elf` (unstripped kernel with symbols, for debugging crash reports),
+     `SHA256SUMS`, SBOM `tally-v0.y.z.cdx.json` (`cargo cyclonedx`)
+  5. **sign & attest:** Sigstore keyless signature of `SHA256SUMS` (`cosign sign-blob` via OIDC,
+     `.sigstore` bundle) and **SLSA build provenance** via `actions/attest-build-provenance` for
+     every artifact, so `gh attestation verify tally-*.iso -R garrickdabbs/tally` proves it came
+     from this repo's workflow at that commit
+  6. `gh release create` with generated notes, marked *pre-release* while `0.y.z`
+- **Verifying a download** (documented in README):
+  `sha256sum -c SHA256SUMS`, `cosign verify-blob --bundle SHA256SUMS.sigstore ...`,
+  `gh attestation verify`.
+- **Hotfixes:** tag from `main`; no release branches before 1.0. A bad release is *yanked* by
+  marking it as such in the release notes and publishing the fixed version, never by deleting or
+  re-uploading artifacts (published hashes are immutable).
+
+---
+
+## 8. Phased Roadmap
 
 Each task has an ID, a deliverable, and **acceptance criteria (AC)** a machine can check.
 Phases are ordered by dependency. Tasks marked ∥ can run in parallel with other agents once their
@@ -313,8 +461,10 @@ phase's interfaces are frozen.
 | P0.2 | `xtask`: build, fetch/pin Limine, make ISO, run QEMU, detect KVM | `cargo xtask run` boots to the Limine menu, then the kernel |
 | P0.3 | Serial driver (16550) + `kprintln!` macro + panic handler printing to serial | Serial shows `Tally stock v0.0.1 booting` |
 | P0.4 | `isa-debug-exit` + in-kernel test framework | `cargo xtask test` runs a trivial test, QEMU exits with the pass code |
-| P0.5 | GitHub Actions CI | PR shows green check; serial log artifact on failure |
-| P0.6 | `README.md`, `docs/adr/0001-microkernel-rust-x86_64.md` | Files exist |
+| P0.5 | `ci.yml` per §7.2: lint (fmt, clippy both targets, doc, `cargo deny`), host tests (nextest + JUnit), kernel tests and integration tests in QEMU with KVM enabled, `all-green` gate; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows a single required `all-green` check; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR |
+| P0.6 | `README.md` (build, run, verify-a-release sections), `docs/adr/0001-microkernel-rust-x86_64.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE` | Files exist; README badges for CI and Scorecard render |
+| P0.7 | Repo governance per §7.1: `main` ruleset (PR + `all-green` required, linear history, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board, fine-grained PAT for agents | Direct push to `main` is rejected; a PR without green CI can't merge; agent token can't merge |
+| P0.8 | `release.yml` per §7.5 + `cargo xtask release-check`: reproducible ISO, tests against artifacts, boot-smoke, SHA256SUMS, SBOM, Sigstore signature, build provenance attestation, GitHub Release with generated notes. `nightly.yml` skeleton (toolchain drift, `cargo audit`, rolling `nightly` pre-release) | Tag `v0.1.0` produces a release whose ISO boots to the banner and passes `gh attestation verify`; two runs produce identical ISO hashes |
 
 ### Phase 1 — Kernel Core
 | ID | Task | AC |
@@ -410,6 +560,8 @@ phase's interfaces are frozen.
 | P9.3 | Fuzz targets (CBOR, vstore parser, syscall validator); fix all crashes | 1 hour of fuzzing per target with no crashes in CI nightly |
 | P9.4 | Kernel hardening: guard pages, W^X for all mappings, stack canaries where supported, KASLR-lite via Limine | Tests confirm W^X (write to a code page faults) |
 | P9.5 | Security review against a threat model doc (`docs/threat-model.md`) | Review doc + issues filed |
+| P9.6 | Reproducible-build verification job (two runners, identical ISO hash), `cargo llvm-cov` on pure crates, Miri + `cargo geiger` in nightly, crash-consistency and 50-boot stress loops in nightly | Nightly green for 7 consecutive days; geiger count tracked in the summary |
+| P9.7 | Supply-chain hardening: CodeQL and OpenSSF Scorecard workflows (repo public), `cargo vet` audits for kernel and driver dependencies, `SECURITY.md` process exercised once with a mock report | Scorecard ≥ 7; `cargo vet` passes with no unaudited kernel deps |
 
 ### Phase 10 — Stretch Ideas (pick for fun)
 - SMP: per-CPU run queues, IPIs, TLB shootdown.
@@ -423,7 +575,7 @@ phase's interfaces are frozen.
 
 ---
 
-## 8. Parallelization Map for Multiple Agents
+## 9. Parallelization Map for Multiple Agents
 
 ```
 P0 ──► P1 ──► P2 (ABI freeze) ──┬──► P3 ──┬──► P4.1 blkd ──► P5.5 vstore svc ──► P6.5/6.6 ──► P7 ──► P9
@@ -444,7 +596,7 @@ Each agent works on a branch named `p<phase>.<task>-short-name` and opens one PR
 
 ---
 
-## 9. Agent Handoff Prompt Template
+## 10. Agent Handoff Prompt Template
 
 Paste this to a Claude agent for each task:
 
@@ -459,18 +611,18 @@ Deliver:
 1. Implementation with doc comments on public items.
 2. Tests proving each acceptance criterion (host tests where possible).
 3. `cargo xtask test` passing locally — paste the summary output in the PR.
-4. Update docs/PLAN.md task status table (Section 10) to "review".
+4. Update docs/PLAN.md task status table (Section 11) to "review".
 5. Open a PR titled "<ID>: <title>" describing design choices and anything left undone.
 If blocked by a design question, write it up in the PR and stop rather than guessing.
 ```
 
 ---
 
-## 10. Status Tracker
+## 11. Status Tracker
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | in progress | P0.1 in review |
+| P0 Scaffolding & Boot | in progress | P0.1 in review; P0.5/P0.7/P0.8 are the GitHub infra tasks (§7) |
 | P1 Kernel Core | not started | |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |
@@ -485,7 +637,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 ---
 
-## 11. Risks & Mitigations
+## 12. Risks & Mitigations
 
 | Risk | Mitigation |
 |---|---|
@@ -496,10 +648,14 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | Filesystem corruption | Pure core with proptested crash consistency *before* it touches a disk; A/B superblocks; checksums on every object |
 | Agents claim "done" without proof | AC are machine-checkable; CI must be green; PR template requires pasted test output |
 | Nightly Rust breakage | Pin an exact nightly date in `rust-toolchain.toml`; bump deliberately |
+| Compromised dependency or GitHub Action | `cargo deny` sources = crates.io only, `cargo vet` for kernel deps, actions pinned to commit SHAs, Dependabot reviews every bump, least-privilege `permissions` |
+| Agent merges or tags without CI | Ruleset with no bypass on `main` and `v*` tags; agents use a fine-grained PAT that cannot merge or tag |
+| Tampered or mistaken release download | Reproducible builds, `SHA256SUMS`, Sigstore signature, SLSA provenance; releases are never re-uploaded, only superseded |
+| CI slow or flaky under TCG emulation | KVM enabled on GitHub Linux runners; TCG fallback scales timeouts; no retries, so flakes surface and get fixed |
 
 ---
 
-## 12. Reference Material for Agents
+## 13. Reference Material for Agents
 - Philipp Oppermann, *Writing an OS in Rust* (blog_os): boot, paging, interrupts, allocators, testing.
 - OSDev Wiki: APIC, ACPI, PCI, virtio, 16550 UART.
 - seL4 manual and whitepaper: capability derivation, IPC, MCS scheduling contexts.
