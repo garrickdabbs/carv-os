@@ -1,0 +1,6 @@
+[toolchain]
+# Pinned on purpose; bump deliberately (see PLAN.md §11).
+channel = "nightly-2026-09-20"
+components = ["rust-src", "llvm-tools-preview", "rustfmt", "clippy"]
+targets = ["x86_64-unknown-none"]
+profile = "minimal"
