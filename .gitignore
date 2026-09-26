@@ -1,0 +1,5 @@
+/target/
+**/target/
+*.iso
+*.img
+qemu.log
