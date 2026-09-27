@@ -32,3 +32,5 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   command; CI's `boot-smoke` job now runs it. Host-side `cargo test`/`clippy` use `--workspace --exclude chisel`.
 - xtask: cargo's JSON messages are parsed with `serde_json` (paths with quotes or backslashes now survive; #13, #14);
   xorriso and `limine bios-install` output is shown on failure and with `CARV_XTASK_VERBOSE=1` (#15).
+- xtask: failed-tool errors separate captured stdout and stderr with a newline (#18); README pre-PR checklist
+  lists every required command including `cargo xtask test` and `cargo audit` (#19).

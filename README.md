@@ -118,9 +118,19 @@ In-kernel tests are ordinary functions marked `#[test_case]` in the kernel crate
 builds them into a bootable test kernel, boots it under Limine in QEMU, and reads the result from the
 `isa-debug-exit` exit code, so a hang, a triple fault or a panic all count as failures.
 
-Before opening a PR, also run `cargo fmt --all --check`, `cargo clippy --workspace --exclude chisel --all-targets -- -D warnings`,
-`cargo clippy -p chisel --target x86_64-unknown-none -- -D warnings`, `cargo deny check` and `cargo xtask perf`.
-The same checks run in CI; the workflows in [`.github/workflows/`](.github/workflows/) are their definition.
+Before opening a PR, run all of these; each maps to a required CI check:
+
+```bash
+cargo xtask test                                                        # host + in-kernel + boot smoke
+cargo xtask perf                                                        # size and boot-time budgets
+cargo fmt --all --check
+cargo clippy --workspace --exclude chisel --all-targets -- -D warnings  # host crates
+cargo clippy -p chisel --target x86_64-unknown-none -- -D warnings      # kernel
+cargo deny check                                                        # advisories, licenses, sources
+cargo audit --deny warnings                                             # fresh RustSec database (cargo install cargo-audit)
+```
+CI runs these plus CodeQL and Scorecard; the workflows in [`.github/workflows/`](.github/workflows/) are
+the definition of every check.
 
 ## Installing
 
