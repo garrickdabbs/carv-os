@@ -18,8 +18,9 @@ agent mistakes early, and a boot/test path that makes every change observable an
 1. **Kernel structure: a capability microkernel** ("chisel"). Drivers, the filesystem (`vstore`),
    networking and authentication run as isolated user-space services. The kernel owns only
    capabilities/CSpaces, IPC endpoints and notifications, threads and scheduling, address spaces,
-   budgets, IRQ routing and the timer. Every kernel operation goes through a capability; there is no
-   global namespace and no root bypass.
+   budgets, IRQ routing and the timer. Every operation on a kernel object is invoked through a
+   capability the caller holds; the only capability-free syscalls are the scheduler's `yield` and the
+   debug-build-only `debug_putc` (`docs/PLAN.md` §3.2). There is no global namespace and no root bypass.
 2. **Language: Rust, pinned nightly**, `no_std` + `alloc`. Nightly is required for
    `custom_test_frameworks` and kernel-relevant features; the exact date is pinned in
    `rust-toolchain.toml` and bumped deliberately.
@@ -52,7 +53,9 @@ agent mistakes early, and a boot/test path that makes every change observable an
   tested on the host. Every `unsafe` block must carry a `// SAFETY:` comment (enforced by clippy).
 - The ABI (syscalls + IPC layout) must be frozen early (P2.10) so services and userland can proceed
   in parallel; changing it afterwards requires a new ADR and a version bump.
-- Everything observable happens on the serial console, so every test — in-kernel, integration, and
-  performance — is a QEMU boot with asserted serial output and an `isa-debug-exit` code.
+- The kernel's only observable output is the serial console. Logic that can live in a pure
+  `crates/*` library is tested natively on the host; everything that needs the kernel — in-kernel
+  tests, boot smoke and performance — is a QEMU boot whose serial output is asserted, and the
+  in-kernel layer additionally reports pass/fail through the `isa-debug-exit` exit code.
 - Portability to other architectures is deferred; the `arch/` module boundary exists so it is
   possible, not so it is easy.
