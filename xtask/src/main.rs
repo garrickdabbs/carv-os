@@ -288,7 +288,14 @@ fn image(args: &[String]) -> Result<PathBuf, String> {
 fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
     let kernel = build_kernel(release)?;
     let iso = assemble_iso(&kernel, cmdline, &target_dir(), ISO_NAME)?;
+    ensure_data_disk()?;
+    println!("image: {}", iso.display());
+    Ok(iso)
+}
 
+/// Creates the blank virtio data disk if it is missing. Called from every QEMU launch path, so a
+/// fresh checkout that goes straight to `xtask test --kernel` still has the drive to attach.
+fn ensure_data_disk() -> Result<PathBuf, String> {
     let data = target_dir().join(DATA_IMG_NAME);
     if !data.is_file() {
         let f = fs::File::create(&data).map_err(|e| format!("creating {}: {e}", data.display()))?;
@@ -300,8 +307,7 @@ fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
             DATA_IMG_BYTES >> 20
         );
     }
-    println!("image: {}", iso.display());
-    Ok(iso)
+    Ok(data)
 }
 
 /// Assembles a bootable ISO around `kernel` (any ELF built for the kernel target — the normal
@@ -516,10 +522,9 @@ fn qemu_command(iso: &Path, opts: &RunOpts) -> Result<Command, String> {
     }
 
     cmd.arg("-cdrom").arg(iso).args(["-boot", "d"]);
-    cmd.arg("-drive").arg(format!(
-        "file={},if=none,id=d0,format=raw",
-        target_dir().join(DATA_IMG_NAME).display()
-    ));
+    let data = ensure_data_disk()?;
+    cmd.arg("-drive")
+        .arg(format!("file={},if=none,id=d0,format=raw", data.display()));
     cmd.args(["-device", "virtio-blk-pci,drive=d0"]);
     cmd.args(["-netdev", "user,id=n0,hostfwd=tcp::5555-:23"]);
     cmd.args(["-device", "virtio-net-pci,netdev=n0"]);
