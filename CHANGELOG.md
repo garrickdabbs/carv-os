@@ -11,7 +11,9 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   installs `linked_list_allocator` (no default features) as the `#[global_allocator]` behind the kernel spin lock
   with interrupts off; `alloc` is enabled in `chisel`; boot prints the heap layout; in-kernel tests exercise
   `Vec`/`Box`/`BTreeMap` and prove memory returns to baseline after 200 allocate/free rounds. Bytes in use are
-  counted for the Budget accounting that arrives with P2.4.
+  counted for the Budget accounting that arrives with P2.4. An explicit `#[alloc_error_handler]` reports
+  `kernel heap exhausted` with the request and heap state and takes the panic path; the `oom` smoke scenario
+  (`oom-test` on the cmdline) proves it.
 
 ## [0.1.1] - 2026-09-27
 

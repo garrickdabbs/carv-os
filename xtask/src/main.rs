@@ -8,8 +8,8 @@
 //! - `run [--release] [--bios] [--debug] [--timeout SECS] [--cmdline STR]`: boot the image in QEMU
 //!   with serial on stdio. Uses KVM when `/dev/kvm` is usable, TCG otherwise.
 //!
-//! - `smoke [--release] [--timeout SECS]`: boot UEFI, BIOS and panic-test scenarios in QEMU and check
-//!   the serial output (CI's boot gate until `test` arrives in P0.4).
+//! - `smoke [--release] [--timeout SECS]`: boot the UEFI, BIOS, panic, double-fault, page-fault,
+//!   stack-overflow and out-of-memory scenarios in QEMU and check the serial output.
 //! - `docs-gate [--base REF] [--repo PATH]`: fail when code changed without matching documentation
 //!   changes (content-checked CHANGELOG growth, new-ADR rule, reasoned skip marker).
 //! - `perf [--runs N]`: measure kernel/ISO size and boot-to-banner time against budgets.
@@ -766,6 +766,16 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
         bios: false,
         cmdline: "stack-overflow-test",
         expect: &["recursing on a 16 KiB stack", "chisel: DOUBLE FAULT"],
+    },
+    Scenario {
+        name: "oom",
+        bios: false,
+        cmdline: "oom-test",
+        expect: &[
+            "allocating 2 MiB from a 1024 KiB heap on purpose",
+            "kernel heap exhausted: allocation of 2097152 bytes",
+            "chisel: PANIC at ",
+        ],
     },
 ];
 
@@ -1553,8 +1563,9 @@ fn test(args: &[String]) -> Result<(), String> {
     }
     if opts.integration {
         results.push((
-            "boot smoke (UEFI, BIOS, panic, double fault, page fault, stack overflow)",
-            run_smoke(opts.release, opts.timeout, None).map(|()| "6 scenarios passed".to_string()),
+            "boot smoke (UEFI, BIOS, panic, double fault, page fault, stack overflow, OOM)",
+            run_smoke(opts.release, opts.timeout, None)
+                .map(|()| format!("{} scenarios passed", SMOKE_SCENARIOS.len())),
         ));
     }
 

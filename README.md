@@ -81,7 +81,7 @@ Everything goes through `cargo xtask` (a small Rust program in [`xtask/`](xtask/
 | `cargo xtask limine` | Fetch and verify the pinned Limine bootloader files (done automatically by `image`). |
 | `cargo xtask run [flags]` | Build the image and boot it in QEMU with the serial console on your terminal. `--iso PATH` boots an existing image (e.g. a release) instead. |
 | `cargo xtask test [--host] [--kernel] [--integration] [--release] [--timeout SECS]` | **The one command every PR must pass**: host unit tests, the in-kernel test binary booted in QEMU, and the boot smoke scenarios. No selector runs all three. |
-| `cargo xtask smoke [--release] [--timeout SECS] [--iso PATH]` | Boot the image under UEFI, BIOS, and with a deliberate panic, and check the serial output (also part of `test`). With `--iso`, boots that image and skips the panic scenario. |
+| `cargo xtask smoke [--release] [--timeout SECS] [--iso PATH]` | Boot the image under UEFI and BIOS, then with a deliberate panic, double fault, page fault, stack overflow and heap exhaustion, and check the serial output (also part of `test`). With `--iso`, boots that image and skips the panic scenario. |
 | `cargo xtask release-check [--tag vX.Y.Z]` | Gate used by the release workflow: tag ↔ `[workspace.package] version` ↔ `CHANGELOG.md` section. |
 | `cargo xtask docs-gate [--base REF]` | Fail if code changed without matching documentation changes (see [Contributing](#contributing)). |
 | `cargo xtask perf [--runs N]` | Measure release-kernel and ISO size and boot timings (median of N boots) against budgets; report in `target/perf/report.md`. |
