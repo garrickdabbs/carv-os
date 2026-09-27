@@ -354,6 +354,16 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
   columns *Backlog → In progress → In review → Done*. The §11 status table summarizes the board.
 - **PR titles** are `<TaskID>: <title>` (e.g. `P2.7: IPC send/recv/call`); the release notes
   generator groups by that prefix.
+- **Review flow (learned 2026-09-27).** Two reviewers post *after* a PR opens or is pushed: GitHub
+  Copilot code review (inline threads, typically within 5–10 minutes) and the maintainer's
+  monitoring loop, which files issues against fresh commits (#38, #40, #43). An agent therefore
+  waits **at least 15 minutes** after opening or pushing a PR, answers/fixes/resolves every thread
+  (the ruleset refuses to merge with unresolved conversations) and only then merges with a merge
+  commit. **Never enable auto-merge on a fresh PR**: it once fired before 26 review threads existed;
+  they were audited and resolved afterwards in #41.
+- **Concurrent agent sessions** on one machine each work in their own `git worktree`
+  (`~/carv-os-<name>`), never in another session's checkout; no bare `git stash`; background
+  watchers only read state through `gh` and act through the API (see CLAUDE.md).
 
 ### 7.2 Build, test and quality workflows — one per README badge
 Each concern is its own workflow so it has its own badge, its own required check, and its own
@@ -420,9 +430,12 @@ protection, Scorecard and rulesets are all available at no cost.
 ### 7.4 Test infrastructure on GitHub
 - **Documentation gate.** `cargo xtask docs-gate` compares the change set against the merge-base
   and fails (exit 2) when code moved without its documentation (rules in the `docs-gate` row
-  above; the logic is a pure, unit-tested function in `xtask`). It runs twice: in CI on every PR,
-  and as a **Claude Code Stop hook** (`.claude/settings.json`) so an agent cannot end a task with
-  undocumented code. Escape hatch: `docs-gate: skip` plus a reason in the PR body.
+  above; the logic is a pure, unit-tested function in `xtask`). CI runs it on every PR from the
+  *base branch's* xtask; agents run it locally before opening a PR. A Claude Code Stop hook that runs
+  the gate is an optional, **uncommitted** personal setting (`.claude/settings.local.json`;
+  `.claude/` is gitignored): a committed settings file would run shell commands on every
+  contributor's machine, so repository policy lives in CI only (decided 2026-09-27). Escape hatch:
+  `docs-gate: skip` plus a reason in the PR body.
 - **Per-PR:** layer 1 via `build.yml` and `ci.yml`, layers 2–3 via `ci.yml` (`cargo xtask test`), plus the Security, Docs and Performance workflows. Integration tests talk to the shell in `--json` mode so
   assertions are exact. Failures always upload the serial log, QEMU log, and the ISO that failed.
 - **Nightly — `.github/workflows/nightly.yml`** (`schedule: cron '0 6 * * *'` + `workflow_dispatch`):
@@ -599,7 +612,7 @@ phase's interfaces are frozen.
 | P9.4 | Kernel hardening: guard pages, W^X for all mappings, stack canaries where supported, KASLR-lite via Limine | Tests confirm W^X (write to a code page faults) |
 | P9.5 | Security review against a threat model doc (`docs/threat-model.md`) | Review doc + issues filed |
 | P9.6 | Reproducible-build verification job (two runners, identical ISO hash), `cargo llvm-cov` on pure crates, Miri + `cargo geiger` in nightly, crash-consistency and 50-boot stress loops in nightly | Nightly green for 7 consecutive days; geiger count tracked in the summary — **reproducible-build part done 2026-09-27** (`trim-paths`, stripped ISO kernel, cross-directory second pass in `release.yml`; coverage/Miri/geiger/stress loops still open) |
-| P9.7 | Supply-chain hardening: CodeQL and OpenSSF Scorecard workflows (repo public), `cargo vet` audits for kernel and driver dependencies, `SECURITY.md` process exercised once with a mock report | Scorecard ≥ 7; `cargo vet` passes with no unaudited kernel deps |
+| P9.7 | Supply-chain hardening: CodeQL and OpenSSF Scorecard workflows (repo public — **landed in Phase 0; Scorecard 7/10 on 2026-09-27, #35**), `cargo vet` audits for kernel and driver dependencies, `SECURITY.md` process exercised once with a mock report, OpenSSF Best Practices badge (needs maintainer registration) | Scorecard ≥ 7; `cargo vet` passes with no unaudited kernel deps |
 
 ### Phase 10 — Stretch Ideas (pick for fun)
 - SMP: per-CPU run queues, IPIs, TLB shootdown.
@@ -661,7 +674,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | Phase | Status | Notes |
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0` |
-| P1 Kernel Core | in progress | P1.1–P1.3 done 2026-09-27 |
+| P1 Kernel Core | in progress | P1.1–P1.3 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables); **next: P1.4 kernel heap** |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |
 | P4 Drivers | not started | |
@@ -669,9 +682,19 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | P6 Shell & Coreutils | not started | |
 | P7 Users & Auth | not started | |
 | P8 Networking | not started | |
-| P9 Hardening | not started | |
+| P9 Hardening | partial | Landed early: CodeQL + Scorecard workflows (P9.7, Phase 0), reproducible builds across machines (P9.6 part, #42, 2026-09-27). Rest not started |
 
 (Better: mirror these as GitHub Issues with a Project board; one issue per task ID, labeled by phase.)
+
+**Open maintainer decisions (2026-09-27, from #35):**
+- Branch-protection approval tiers (required approver / CODEOWNERS review / last-push approval).
+  With one maintainer this blocks the autonomous loop; options: leave as is, add a second reviewer
+  account and require one approval, or enable with admin bypass.
+- OpenSSF Best Practices badge: registration at bestpractices.dev needs the maintainer's login; the
+  questionnaire can then be answered from README/SECURITY/CONTRIBUTING.
+
+**Deferred to later tasks:** nextest + JUnit output (P9.6), `cargo vet` (P9.7), fuzzing once parsers
+exist (P9.3), Miri/geiger/coverage/50-boot stress in nightly (P9.6).
 
 ---
 
@@ -690,6 +713,9 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | Agent merges or tags without CI | Ruleset with no bypass on `main` and `v*` tags; agents use a fine-grained PAT that cannot merge or tag |
 | Tampered or mistaken release download | Reproducible builds, `SHA256SUMS`, Sigstore signature, SLSA provenance; releases are never re-uploaded, only superseded |
 | CI slow or flaky under TCG emulation | KVM enabled on GitHub Linux runners; TCG fallback scales timeouts; no retries, so flakes surface and get fixed |
+| Review comments land after the merge (auto-merge races Copilot and the monitoring loop) | No auto-merge on fresh PRs; ≥ 15-minute review window after every push; every thread answered and resolved before merging; periodic audit that all merged PRs have zero unresolved threads (§7.1) |
+| Two agent sessions share one checkout (branch switches, stashes, stray commits on `main`) | One `git worktree` per session; no bare `git stash`; watchers read via `gh` only; `main` is protected so a stray local commit cannot be pushed (§7.1, CLAUDE.md) |
+| A PR weakens the gate it is judged by | `docs.yml` runs `docs-gate` from the *base* branch's xtask (bootstrap fallback only when the base lacks `--repo`); the `main` ruleset has no bypass |
 
 ---
 
@@ -701,3 +727,25 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 - Limine protocol spec (`limine` crate docs).
 - virtio 1.2 specification (OASIS).
 - smoltcp examples; Nushell documentation (structured pipelines); git internals (object model).
+
+### Toolchain and tooling notes learned so far
+- **Reproducible kernel ELF:** `-C remap-path-prefix` is *not* a codegen option; use cargo's
+  `trim-paths = "all"` in the release profile (`cargo-features = ["trim-paths"]`, nightly). Only the
+  `/rustc/<commit>` and `/cargo/registry/<index-hash>` prefixes remain, identical on every machine
+  with the pinned toolchain. The ISO's kernel copy is stripped with the toolchain's `llvm-objcopy`
+  (`llvm-tools-preview`), never a system binutils.
+- **Reproducible ISO:** `SOURCE_DATE_EPOCH` alone is not enough for xorriso — pass
+  `--modification-date=<stamp>00` and `--set_all_file_dates @<epoch>` *after* the `-as mkisofs`
+  arguments, and overwrite the MBR disk id at offset `0x1B8` (`limine bios-install` seeds it from
+  `time()`).
+- **GitHub Actions:** `id-token` accepts only `write` (or absent), never `read`; job `permissions`
+  blocks that run compilers stay `contents: read`. Plain-scalar colons in `if:`/`name:` break YAML,
+  so quote them and validate with PyYAML. `dtolnay/rust-toolchain` needs an explicit toolchain input;
+  `rustup toolchain install` reads `rust-toolchain.toml` directly. `cargo-deny-action` installs its
+  own musl build of the pinned nightly from `rust-toolchain.toml`.
+- **Kernel flags:** a global `RUSTFLAGS` (env or `build.rustflags`) silently replaces
+  `target.x86_64-unknown-none.rustflags`; keep kernel flags only in `.cargo/config.toml`.
+- **x86_64 0.15:** `Cr2::read()` returns `Result`; use `is_multiple_of` for alignment checks
+  (clippy); `#[allow(unconditional_recursion)]` is needed on the stack-overflow test.
+- **Kernel test layer in CI** needs the blank data disk too (`ensure_data_disk()` runs from
+  `qemu_command`), and every QEMU scenario must carry a timeout.

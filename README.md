@@ -201,8 +201,9 @@ but the workflow is the same for anyone:
    Dependabot PRs are exempt. If a change genuinely needs no docs, write
    `docs-gate: skip — <reason of at least 20 characters>` in the PR body; a bare marker fails the gate.
    In CI the gate runs from the base branch's copy of `xtask`, so a PR cannot change the rules it is
-   judged by. The same gate runs as a Claude Code stop hook ([`.claude/settings.json`](.claude/settings.json)),
-   so agents cannot finish a task with undocumented code.
+   judged by. Run `cargo xtask docs-gate` locally before opening a PR; Claude Code settings are
+   deliberately not committed (`.claude/` is gitignored), so a local Stop hook that runs the gate is an
+   optional personal setting in `.claude/settings.local.json`, not repository policy.
 4. Every `unsafe` block carries a `// SAFETY:` comment. Kernel code never adds a way around
    capability checks.
 

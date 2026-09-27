@@ -174,7 +174,10 @@ fn paging_map_write_translate_unmap() {
     );
 
     let f = frame::allocate().expect("frame");
-    paging::map(page, f, paging::KERNEL_DATA).expect("map");
+    if let Err((e, returned)) = paging::map(page, f, paging::KERNEL_DATA) {
+        frame::free(returned);
+        panic!("mapping {addr:#x} failed: {e}");
+    }
     assert_eq!(
         paging::translate(addr),
         Some(f.start()),
@@ -232,9 +235,11 @@ fn paging_refuses_pages_outside_the_dynamic_region() {
     let page = Page::containing_address(addr);
     let a = frame::allocate().unwrap();
     let b = frame::allocate().unwrap();
-    paging::map(page, a, paging::KERNEL_DATA)
-        .map_err(|(e, _)| e)
-        .unwrap();
+    if let Err((e, returned)) = paging::map(page, a, paging::KERNEL_DATA) {
+        // The test is about to fail anyway, but the frame still goes back to its owner (#43).
+        frame::free(returned);
+        panic!("first mapping of {addr:#x} failed: {e}");
+    }
     match paging::map(page, b, paging::KERNEL_DATA) {
         Err((paging::MapError::Mapper(_), returned)) => frame::free(returned),
         other => panic!("expected a mapper error, got {other:?}"),
