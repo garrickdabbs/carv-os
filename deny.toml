@@ -38,6 +38,8 @@ exceptions = []
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Workspace crates depend on each other by path without a version; that is not a wildcard risk.
+allow-wildcard-paths = true
 highlight = "all"
 # The kernel must stay dependency-light; anything pulling in std for the kernel is a bug.
 deny = []

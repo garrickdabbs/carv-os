@@ -111,6 +111,54 @@ fn gdt_selectors_are_live() {
     assert_eq!(top % 16, 0);
 }
 
+/// Scratch space for the frame test; 10k indexes is too big for the 64 KiB boot stack.
+static FRAME_SCRATCH: crate::sync::StaticCell<[u32; 10_000]> =
+    crate::sync::StaticCell::new([0; 10_000]);
+
+#[test_case]
+fn frame_allocator_ten_thousand_frames_unique_and_restored() {
+    use crate::mm::frame;
+    let (free_before, total) = frame::stats();
+    assert!(
+        total > 10_000 && free_before > 10_000,
+        "VM too small for the test"
+    );
+
+    // SAFETY: test code on the single boot CPU; nothing else touches FRAME_SCRATCH.
+    let scratch = unsafe { FRAME_SCRATCH.get_mut() };
+    for slot in scratch.iter_mut() {
+        let f = frame::allocate().expect("frame available");
+        assert_ne!(f.0.as_u64(), 0, "frame 0 must never be handed out");
+        assert_eq!(f.0.as_u64() % 4096, 0);
+        *slot = f.index() as u32;
+    }
+    assert_eq!(frame::stats().0, free_before - 10_000);
+
+    // No duplicates: the allocator hands out ascending indexes from a fresh bitmap, so a sorted
+    // check is a strict-increase check; fall back to the quadratic check if that ever changes.
+    let ascending = scratch.windows(2).all(|w| w[0] < w[1]);
+    if !ascending {
+        for i in 0..scratch.len() {
+            for j in (i + 1)..scratch.len() {
+                assert_ne!(scratch[i], scratch[j], "duplicate frame {}", scratch[i]);
+            }
+        }
+    }
+
+    // Free every other one first, then the rest: the count must come back exactly.
+    for (k, &idx) in scratch.iter().enumerate() {
+        if k % 2 == 0 {
+            frame::free(frame::Frame(x86_64::PhysAddr::new(idx as u64 * 4096)));
+        }
+    }
+    for (k, &idx) in scratch.iter().enumerate() {
+        if k % 2 == 1 {
+            frame::free(frame::Frame(x86_64::PhysAddr::new(idx as u64 * 4096)));
+        }
+    }
+    assert_eq!(frame::stats(), (free_before, total));
+}
+
 #[test_case]
 fn interrupts_are_disabled_at_boot() {
     // Limine hands us the CPU with IF clear and we have no IDT yet; anything else is a bug.

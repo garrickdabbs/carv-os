@@ -5,7 +5,8 @@
 //! banner and what the bootloader handed over, and halt. Kernel command line words `panic-test`
 //! and `double-fault-test` exercise the panic handler and the double-fault path. In test builds
 //! (`cargo xtask test --kernel`) `kmain` runs the in-kernel tests instead and exits QEMU with a
-//! pass/fail code. Frame allocator and paging (P1.2–P1.3) come next.
+//! pass/fail code. The physical frame allocator is built from the memory map (P1.2); paging
+//! (P1.3) and the kernel heap (P1.4) come next.
 
 #![no_std]
 #![no_main]
@@ -28,6 +29,7 @@ use limine::request::{
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 
 mod arch;
+mod mm;
 mod serial;
 mod sync;
 #[cfg(test)]
@@ -90,9 +92,6 @@ extern "C" fn kmain() -> ! {
         arch::x86_64::gdt::double_fault_stack_top().as_u64()
     );
 
-    #[cfg(test)]
-    test_main();
-
     if !BASE_REVISION.is_supported() {
         panic!(
             "bootloader does not support Limine base revision {} (got {:?})",
@@ -128,7 +127,25 @@ extern "C" fn kmain() -> ! {
             entries.len(),
             usable / (1024 * 1024)
         );
+        let hhdm = HHDM
+            .response()
+            .expect("Limine did not provide the HHDM offset")
+            .offset;
+        let layout = mm::frame::init(entries, hhdm);
+        let probe = mm::frame::self_check(hhdm);
+        kprintln!(
+            "  frames: {} free of {} ({} MiB); bitmap {} KiB at {:#x}; self-check ok ({:#x})",
+            layout.free_frames,
+            layout.frame_count,
+            layout.free_frames * carv_frames::FRAME_SIZE / (1024 * 1024),
+            layout.bitmap_bytes / 1024,
+            layout.bitmap_phys.as_u64(),
+            probe.0.as_u64()
+        );
     }
+
+    #[cfg(test)]
+    test_main();
 
     if cmdline.split_whitespace().any(|w| w == "panic-test") {
         panic!("deliberate panic requested on the kernel command line");

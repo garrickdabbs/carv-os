@@ -12,6 +12,9 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   release assets (#35). Fuller `.gitignore`; `CONTRIBUTING.md` added (#34, #35).
 
 ### Added
+- P1.2: physical frame allocator — `crates/carv-frames` (pure bitmap allocator, 5 host tests) and
+  `kernel::mm::frame` (bitmap carved from the first usable Limine region via the HHDM; frame 0 never handed
+  out); boot prints free/total frames; in-kernel test allocates and frees 10 000 frames.
 - P1.1: GDT with kernel code/data/TSS descriptors, a dedicated double-fault IST stack, and an IDT with a handler
   for every CPU exception (`#BP` resumes and is counted; `#DF` prints on its own stack and halts; everything
   else panics with the frame). `x86_64` 0.15 crate. Kernel cmdline `double-fault-test` and a `dfault` smoke
