@@ -392,12 +392,12 @@ fn run_tool(cmd: &mut Command, what: &str) -> Result<(), String> {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
     if !out.status.success() {
-        return Err(format!(
-            "{what} failed ({}):\n{}{}",
-            out.status,
-            stdout.trim_end(),
-            stderr.trim_end()
-        ));
+        let mut detail = stdout.trim_end().to_string();
+        if !detail.is_empty() && !stderr.trim().is_empty() {
+            detail.push('\n');
+        }
+        detail.push_str(stderr.trim_end());
+        return Err(format!("{what} failed ({}):\n{detail}", out.status));
     }
     if verbose && !(stdout.trim().is_empty() && stderr.trim().is_empty()) {
         eprintln!("--- {what} ---\n{}{}", stdout, stderr);
