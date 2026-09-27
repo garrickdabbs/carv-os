@@ -34,3 +34,5 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   xorriso and `limine bios-install` output is shown on failure and with `CARV_XTASK_VERBOSE=1` (#15).
 - xtask: failed-tool errors separate captured stdout and stderr with a newline (#18); README pre-PR checklist
   lists every required command including `cargo xtask test` and `cargo audit` (#19).
+- xtask: captured tool stdout/stderr are trimmed consistently before being joined, so error output never has a
+  blank line between them (#22).

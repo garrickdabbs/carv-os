@@ -392,11 +392,7 @@ fn run_tool(cmd: &mut Command, what: &str) -> Result<(), String> {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
     if !out.status.success() {
-        let mut detail = stdout.trim_end().to_string();
-        if !detail.is_empty() && !stderr.trim().is_empty() {
-            detail.push('\n');
-        }
-        detail.push_str(stderr.trim_end());
+        let detail = join_tool_output(&stdout, &stderr);
         return Err(format!("{what} failed ({}):\n{detail}", out.status));
     }
     if verbose && !(stdout.trim().is_empty() && stderr.trim().is_empty()) {
@@ -1353,6 +1349,18 @@ fn test_executable_from_messages(messages: &str, package: &str) -> Option<PathBu
         .next()
 }
 
+/// Joins a tool's captured stdout and stderr for an error message: both trimmed of surrounding
+/// whitespace, separated by exactly one newline when both are non-empty.
+fn join_tool_output(stdout: &str, stderr: &str) -> String {
+    let (out, err) = (stdout.trim(), stderr.trim());
+    match (out.is_empty(), err.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => out.to_string(),
+        (true, false) => err.to_string(),
+        (false, false) => format!("{out}\n{err}"),
+    }
+}
+
 fn tail(text: &str, lines: usize) -> String {
     let all: Vec<&str> = text.lines().collect();
     let start = all.len().saturating_sub(lines);
@@ -1583,6 +1591,14 @@ mod tests {
     fn qemu_exit_codes_match_kernel() {
         assert_eq!(QEMU_EXIT_TESTS_PASSED, 33);
         assert_eq!(QEMU_EXIT_TESTS_FAILED, 35);
+    }
+
+    #[test]
+    fn tool_output_joined_with_single_separator() {
+        assert_eq!(join_tool_output("hello\n", "\nerror\n"), "hello\nerror");
+        assert_eq!(join_tool_output("a\nb\n", ""), "a\nb");
+        assert_eq!(join_tool_output("  \n", "err"), "err");
+        assert_eq!(join_tool_output("", "\n\n"), "");
     }
 
     #[test]
