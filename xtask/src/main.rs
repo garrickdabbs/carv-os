@@ -705,6 +705,21 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
         cmdline: "double-fault-test",
         expect: &["CarvOS chisel v", "chisel: DOUBLE FAULT"],
     },
+    Scenario {
+        name: "pfault",
+        bios: false,
+        cmdline: "page-fault-test",
+        expect: &[
+            "touching unmapped page",
+            "PAGE FAULT accessing 0xffff900000100000",
+        ],
+    },
+    Scenario {
+        name: "sovflw",
+        bios: false,
+        cmdline: "stack-overflow-test",
+        expect: &["recursing on a 16 KiB stack", "chisel: DOUBLE FAULT"],
+    },
 ];
 
 /// Boots every [`SMOKE_SCENARIOS`] entry in QEMU and checks the serial output. Each run stops as
@@ -1330,8 +1345,8 @@ fn test(args: &[String]) -> Result<(), String> {
     }
     if opts.integration {
         results.push((
-            "boot smoke (UEFI, BIOS, panic, double fault)",
-            run_smoke(opts.release, opts.timeout, None).map(|()| "4 scenarios passed".to_string()),
+            "boot smoke (UEFI, BIOS, panic, double fault, page fault, stack overflow)",
+            run_smoke(opts.release, opts.timeout, None).map(|()| "6 scenarios passed".to_string()),
         ));
     }
 

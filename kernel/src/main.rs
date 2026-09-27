@@ -5,8 +5,10 @@
 //! banner and what the bootloader handed over, and halt. Kernel command line words `panic-test`
 //! and `double-fault-test` exercise the panic handler and the double-fault path. In test builds
 //! (`cargo xtask test --kernel`) `kmain` runs the in-kernel tests instead and exits QEMU with a
-//! pass/fail code. The physical frame allocator is built from the memory map (P1.2); paging
-//! (P1.3) and the kernel heap (P1.4) come next.
+//! pass/fail code. The physical frame allocator is built from the memory map (P1.2) and the
+//! bootloader's page tables are adopted for map/unmap/translate (P1.3); the kernel heap (P1.4)
+//! comes next. Cmdline words `page-fault-test` and `stack-overflow-test` exercise the page-fault
+//! handler and the guard-page → double-fault path.
 
 #![no_std]
 #![no_main]
@@ -133,6 +135,13 @@ extern "C" fn kmain() -> ! {
             .offset;
         let layout = mm::frame::init(entries, hhdm);
         let probe = mm::frame::self_check(hhdm);
+        // SAFETY: `hhdm` is Limine's HHDM offset and CR3 still holds Limine's tables, which live in
+        // bootloader-reclaimable memory the frame allocator never hands out.
+        unsafe { mm::paging::init(hhdm) };
+        kprintln!(
+            "  paging: adopted CR3 tables; kernel dynamic region at {:#x}",
+            mm::paging::KERNEL_DYNAMIC_BASE
+        );
         kprintln!(
             "  frames: {} free of {} ({} MiB); bitmap {} KiB at {:#x}; self-check ok ({:#x})",
             layout.free_frames,
@@ -152,6 +161,15 @@ extern "C" fn kmain() -> ! {
     }
     if cmdline.split_whitespace().any(|w| w == "double-fault-test") {
         force_double_fault();
+    }
+    if cmdline.split_whitespace().any(|w| w == "page-fault-test") {
+        force_page_fault();
+    }
+    if cmdline
+        .split_whitespace()
+        .any(|w| w == "stack-overflow-test")
+    {
+        force_stack_overflow();
     }
 
     kprintln!("chisel: nothing more to do yet; halting");
@@ -173,6 +191,68 @@ fn force_double_fault() -> ! {
             options(noreturn)
         );
     }
+}
+
+/// Maps a page, unmaps it again, then touches it: the access must reach the `#PF` handler,
+/// which reports `PAGE FAULT accessing <addr>` and panics.
+fn force_page_fault() -> ! {
+    use x86_64::VirtAddr;
+    use x86_64::structures::paging::Page;
+    let addr = VirtAddr::new(mm::paging::KERNEL_DYNAMIC_BASE + 0x10_0000);
+    let page = Page::containing_address(addr);
+    let frame = mm::frame::allocate().expect("frame");
+    mm::paging::map(page, frame, mm::paging::KERNEL_DATA).expect("map");
+    let unmapped = mm::paging::unmap(page).expect("unmap");
+    mm::frame::free(unmapped);
+    assert_eq!(
+        mm::paging::translate(addr),
+        None,
+        "page still translates after unmap"
+    );
+    kprintln!(
+        "chisel: touching unmapped page {:#x} on purpose",
+        addr.as_u64()
+    );
+    // SAFETY: intentionally faulting read of an unmapped page; the #PF handler panics and halts.
+    let _ = unsafe { core::ptr::read_volatile(addr.as_ptr::<u64>()) };
+    unreachable!("read of an unmapped page did not fault");
+}
+
+/// Switches to a small kernel stack that has an unmapped guard page beneath it, then recurses
+/// until the stack overflows into the guard: the write faults, the `#PF` handler cannot push its
+/// frame onto the exhausted stack, and the CPU escalates to `#DF` on the IST stack.
+fn force_stack_overflow() -> ! {
+    use x86_64::VirtAddr;
+    // Guard page at TEST_STACK_BASE - 4 KiB stays unmapped; four mapped pages above it.
+    let base = VirtAddr::new(mm::paging::KERNEL_DYNAMIC_BASE + 0x20_0000);
+    let top = mm::paging::map_stack_with_guard(base, 4);
+    kprintln!(
+        "chisel: recursing on a 16 KiB stack at {:#x} with a guard page below",
+        base.as_u64()
+    );
+    // SAFETY: switches to the freshly mapped stack and never returns; the recursion ends in a
+    // double fault whose handler halts the CPU.
+    unsafe {
+        core::arch::asm!(
+            "mov rsp, {top}",
+            "call {f}",
+            top = in(reg) top.as_u64(),
+            f = sym recurse_forever,
+            options(noreturn)
+        );
+    }
+}
+
+/// Unbounded recursion with a live stack frame each level (no tail call possible). The
+/// recursion is the point: it ends in the double-fault handler, never by returning.
+#[inline(never)]
+#[allow(unconditional_recursion)]
+extern "C" fn recurse_forever(depth: u64) -> u64 {
+    let mut frame = [0u64; 32];
+    frame[(depth % 32) as usize] = core::hint::black_box(depth);
+    let below = recurse_forever(depth + 1);
+    core::hint::black_box(&frame);
+    below + frame[0]
 }
 
 #[panic_handler]
