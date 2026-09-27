@@ -1,4 +1,4 @@
-//! `cargo xtask <command>`: build orchestration for Tally OS.
+//! `cargo xtask <command>`: build orchestration for CarvOS.
 //!
 //! Commands so far:
 //! - `build [--release]`: build the kernel and check it is linked in the higher half.
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 const KERNEL_TARGET: &str = "x86_64-unknown-none";
-const KERNEL_PACKAGE: &str = "stock";
+const KERNEL_PACKAGE: &str = "chisel";
 /// Start of the top 2 GiB of the address space, where `kernel/linker.ld` places the kernel.
 const HIGHER_HALF_BASE: u64 = 0xffff_ffff_8000_0000;
 

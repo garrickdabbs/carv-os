@@ -1,4 +1,4 @@
-/* Tally "stock" kernel linker script.
+/* CarvOS "chisel" kernel linker script.
  * Links the kernel into the top 2 GiB of the address space (higher half),
  * matching -C code-model=kernel. Segments are split so each gets exactly
  * one of R, RX, or RW permissions (W^X). */

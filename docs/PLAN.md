@@ -1,17 +1,21 @@
-# Tally OS — Master Build Plan
+# CarvOS — Master Build Plan
 
 > A hobby operating system in Rust for x86_64 that treats **authority, history, data, and resources**
 > as built-in parts of the system, not add-ons.
 > Target: QEMU/KVM virtual machines. Audience for this document: Claude / AI coding agents and the
 > human maintainer.
 
-*Why "Tally": a medieval tally stick was notched to record a debt, then split in two, with each
-party keeping half as proof. It was a token of authority you held (**capabilities**), a record that
-couldn't be quietly changed (**versioned history**), and a count of what was owed (**budgets**).
-Tally OS is built on those same three ideas, plus typed data to make them queryable.
-The kernel is called **stock**: the creditor's half of a split tally was the "stock" (the source of
-the financial word), the half that held the authority. In Tally, the kernel holds the authority:
-it's the only code that can create or revoke capabilities.*
+**CARV** stands for **Capability Authority & Resource Versioning**: every action needs an explicit
+capability (*authority*), every resource is budgeted and every change is kept (*resource versioning*).
+
+### Naming conventions
+| Form | Use it for |
+|---|---|
+| **CARV** | The acronym and the design itself ("the CARV model", "CARV capabilities"). |
+| **CarvOS** | The operating system as a product: docs, banners, release names, the README title. |
+| `carv-os` | The GitHub repository (`github.com/garrickdabbs/carv-os`), ISO and artifact file names. |
+| `carv` | Code identifiers: crate prefix (`carv-abi`, `carv-rt`), ELF section (`.carv_schema`), CLI/tool names. |
+| **chisel** | The kernel (crate and binary). A chisel is what you carve with; the kernel is the one tool that shapes capabilities. |
 
 ---
 
@@ -21,7 +25,7 @@ Linux, Unix, and Windows were designed when one machine meant one trusted user r
 they wrote or bought. That assumption causes four problems that today are patched with add-ons
 instead of being fixed in the base design:
 
-| # | Problem in Linux/Unix/Windows | Today's add-on patch | Tally's built-in answer |
+| # | Problem in Linux/Unix/Windows | Today's add-on patch | CARV's built-in answer |
 |---|---|---|---|
 | 1 | **Ambient authority.** Every program you run can read your SSH keys, delete your files, and open any network connection. Supply-chain attacks exploit this. | SELinux, AppArmor, sandboxes, Flatpak, UAC | **Capability security**: a process starts with *nothing* and can use only the handles it was explicitly given. Handles can be narrowed and revoked. |
 | 2 | **Destructive, unexplained mutation.** Overwrites are permanent; nobody can answer "what changed, when, and which program did it?" Ransomware and config drift thrive. | btrfs/ZFS snapshots, backups, git for /etc, auditd | **Versioned object store**: every write is a transaction in a content-addressed history, and every commit records *who* (principal) and *what* (program hash) made it. Undo any change. |
@@ -30,7 +34,7 @@ instead of being fixed in the base design:
 
 **Prior art, stated honestly:** each idea exists somewhere (seL4/Fuchsia/KeyKOS for capabilities;
 ZFS/NixOS/git for versioned state; PowerShell/Nushell for structured shells; cgroups/seL4-MCS for
-budgets). Tally's contribution is **combining all four under one identity model**: a single
+budgets). CARV's contribution is **combining all four under one identity model**: a single
 capability ties an action to a *principal*, the *budget* it's charged to, and the *provenance* stored
 with the data it changes. Each pillar strengthens the others:
 
@@ -85,7 +89,7 @@ with the data it changes. Each pillar strengthens the others:
 │  Services: init │ svcmgr │ authd │ vstore (FS) │ netd │ blkd │ cons  │
 │            (each is a separate process with only the caps it needs)  │
 ├──────────────────────────────────────────────────────────────────────┤
-│ Kernel (ring 0) — "stock"                                            │
+│ Kernel (ring 0) — "chisel"                                           │
 │  capabilities & CSpaces │ IPC endpoints │ threads & scheduler        │
 │  address spaces (paging) │ budgets (CPU/mem accounting)              │
 │  IRQ → notification routing │ timer │ minimal ELF loader for init    │
@@ -171,9 +175,9 @@ with `E_BUDGET` when the budget is used up.
 - **Storage quota** is charged to the writing principal's budget.
 
 #### C. Typed records & shell (`sh`)
-- **Value model** (`tally-value` crate): `Null, Bool, Int, Float, Str, Bytes, Time, Duration, Size,
+- **Value model** (`carv-value` crate): `Null, Bool, Int, Float, Str, Bytes, Time, Duration, Size,
   Path, CapRef, List, Record, Table`.
-- **Schema:** every program embeds a schema section in its ELF (`.tally_schema`): name, args, input
+- **Schema:** every program embeds a schema section in its ELF (`.carv_schema`): name, args, input
   type, output type, required caps. `help <cmd>` and `describe <cmd> --json` read it. This also
   gives AI agents a tool manifest for free.
 - **Pipelines** pass CBOR-encoded Values over IPC channels, not bytes. The shell renders values at
@@ -212,7 +216,7 @@ with `E_BUDGET` when the budget is used up.
 ## 4. Repository Layout (Cargo workspace)
 
 ```
-tally/
+carv-os/
 ├── .github/
 │   ├── workflows/
 │   │   ├── ci.yml             # per-PR: lint, host tests, kernel + integration tests in QEMU, all-green gate
@@ -239,14 +243,14 @@ tally/
 ├── rust-toolchain.toml        # pinned nightly + rust-src, llvm-tools
 ├── .cargo/config.toml
 ├── xtask/                     # cargo xtask build|image|run|test|gdb|release-check
-├── kernel/                    # "stock": the microkernel (bin, x86_64-unknown-none)
+├── kernel/                    # "chisel": the microkernel (bin, x86_64-unknown-none)
 ├── crates/                    # no_std libraries, host-testable with `cargo test`
-│   ├── tally-abi/             # syscall numbers, message layouts, error codes (shared)
-│   ├── tally-caps/            # capability derivation tree logic (pure)
-│   ├── tally-value/           # Value model + CBOR codec + schema types
-│   ├── tally-vstore-core/     # object store format, tree/commit logic (pure, on a BlockDevice trait)
-│   ├── tally-budget/          # accounting math, token buckets (pure)
-│   └── tally-rt/              # user-space runtime: _start, syscalls, allocator, IPC helpers, spawn
+│   ├── carv-abi/             # syscall numbers, message layouts, error codes (shared)
+│   ├── carv-caps/            # capability derivation tree logic (pure)
+│   ├── carv-value/           # Value model + CBOR codec + schema types
+│   ├── carv-vstore-core/     # object store format, tree/commit logic (pure, on a BlockDevice trait)
+│   ├── carv-budget/          # accounting math, token buckets (pure)
+│   └── carv-rt/              # user-space runtime: _start, syscalls, allocator, IPC helpers, spawn
 ├── services/
 │   ├── init/                  # first user process; starts svcmgr
 │   ├── svcmgr/                # spawns & supervises services, records program hashes
@@ -277,11 +281,11 @@ curl https://sh.rustup.rs -sSf | sh     # if rustup not installed
 cargo install cargo-fuzz               # later phases
 ```
 
-`cargo xtask run` → builds everything, makes `target/tally.iso` plus `target/data.img`, and starts:
+`cargo xtask run` → builds everything, makes `target/carv-os.iso` plus `target/data.img`, and starts:
 ```
 qemu-system-x86_64 -machine q35 -cpu max -m 512M -enable-kvm \
   -bios /usr/share/edk2/ovmf/OVMF_CODE.fd \
-  -cdrom target/tally.iso \
+  -cdrom target/carv-os.iso \
   -drive file=target/data.img,if=none,id=d0,format=raw -device virtio-blk-pci,drive=d0 \
   -netdev user,id=n0,hostfwd=tcp::5555-:23 -device virtio-net-pci,netdev=n0 \
   -serial stdio -display none \
@@ -293,7 +297,7 @@ qemu-system-x86_64 -machine q35 -cpu max -m 512M -enable-kvm \
 
 ## 6. Testing Strategy (four layers)
 
-1. **Host unit tests**: `cargo test -p tally-caps -p tally-value -p tally-vstore-core -p tally-budget`.
+1. **Host unit tests**: `cargo test -p carv-caps -p carv-value -p carv-vstore-core -p carv-budget`.
    Pure logic, run in milliseconds. Property tests with `proptest` for the cap derivation tree
    (revoke removes every descendant), vstore (crash at any write, then recover to the last commit),
    and CBOR round-trips.
@@ -332,7 +336,7 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
   which has admin rights. Give agents a **fine-grained PAT** (or a GitHub App) scoped to this repo
   with only `contents: write` and `pull_requests: write`, no admin. Rulesets then bind agents
   mechanically: they can push branches and open PRs but can never merge to `main` without CI.
-- **`CODEOWNERS`:** `kernel/`, `crates/tally-abi/`, `docs/abi.md`, `docs/adr/`, `.github/`, `deny.toml`
+- **`CODEOWNERS`:** `kernel/`, `crates/carv-abi/`, `docs/abi.md`, `docs/adr/`, `.github/`, `deny.toml`
   → maintainer. Changes there get a review request automatically.
 - **Templates:** PR template (task ID, AC checklist, pasted `cargo xtask test` output, unsafe-block
   count delta); issue templates for *task*, *bug (with serial log)*, and *ADR proposal*.
@@ -348,11 +352,11 @@ Triggers: `pull_request`, `push` to `main`, `merge_group`, `workflow_dispatch`.
 
 | Job | What it does | Timeout |
 |---|---|---|
-| `lint` | `cargo fmt --check`; `cargo clippy --all-targets -D warnings` for host crates *and* `-p stock --target x86_64-unknown-none`; `cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`; `cargo deny check` | 10 min |
+| `lint` | `cargo fmt --check`; `cargo clippy --all-targets -D warnings` for host crates *and* `-p chisel --target x86_64-unknown-none`; `cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`; `cargo deny check` | 10 min |
 | `host-tests` | `cargo nextest run --workspace --locked` (layer 1), JUnit report uploaded and summarized in `$GITHUB_STEP_SUMMARY` | 15 min |
 | `kernel-tests` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask test --kernel` (layer 2) | 20 min |
 | `integration` | `cargo xtask test --integration` (layer 3); uploads `target/serial.log`, `qemu.log`, and the ISO on failure | 30 min |
-| `image` (push to `main` only) | `cargo xtask image --release`; uploads `tally-<sha>.iso` as a 7-day artifact so the maintainer can boot the latest `main` | 15 min |
+| `image` (push to `main` only) | `cargo xtask image --release`; uploads `carv-<sha>.iso` as a 7-day artifact so the maintainer can boot the latest `main` | 15 min |
 | `all-green` | `needs:` every job above, `if: always()`, fails if any dependency failed or was cancelled. **This is the only required status check**, so adding jobs never means touching the ruleset. | 1 min |
 
 Details:
@@ -382,8 +386,8 @@ Details:
 | Dependency updates | **Dependabot** for `cargo` and `github-actions`, weekly, grouped minor/patch | `.github/dependabot.yml` |
 | Vulnerable / unlicensed / duplicate deps | **`cargo deny`** (`advisories`, `licenses` allow-list: MIT, Apache-2.0, BSD-2/3, ISC, Zlib, Unicode-3.0; `bans` on duplicate versions; `sources` = crates.io only) | `deny.toml`, `lint` job |
 | Fresh advisories without a code change | **`cargo audit`** on the nightly schedule (advisory DB moves even when code doesn't) | `nightly.yml` |
-| Unsafe-code discipline (mechanizes the CLAUDE.md rule) | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(unsafe_op_in_unsafe_fn)]` in every crate; `cargo geiger` unsafe-count report posted to the PR summary; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `tally-rt` | crate roots, `lint` job |
-| Undefined behaviour in host-testable code | **Miri**: `cargo miri test` on the pure crates (`tally-caps`, `tally-value`, `tally-vstore-core`, `tally-budget`) | `nightly.yml` |
+| Unsafe-code discipline (mechanizes the CLAUDE.md rule) | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(unsafe_op_in_unsafe_fn)]` in every crate; `cargo geiger` unsafe-count report posted to the PR summary; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `carv-rt` | crate roots, `lint` job |
+| Undefined behaviour in host-testable code | **Miri**: `cargo miri test` on the pure crates (`carv-caps`, `carv-value`, `carv-vstore-core`, `carv-budget`) | `nightly.yml` |
 | Fuzzing (P9.3) | `cargo fuzz` for 20 min per target nightly; corpus cached as an artifact; a crash uploads the input and opens/updates an issue labeled `kind:security` | `nightly.yml` |
 | Actions supply chain | Every action pinned to a **full commit SHA** (Dependabot bumps them); top-level `permissions: contents: read`, elevated per job only (`id-token: write`, `attestations: write`, `contents: write` for release); no long-lived secrets anywhere, signing is keyless via OIDC | all workflows |
 | Static analysis | **CodeQL** code scanning with the Rust extractor; **OpenSSF Scorecard** workflow with a README badge, target ≥ 7 by Phase 9 | `codeql.yml`, `scorecard.yml` |
@@ -419,7 +423,7 @@ the rest activates when the repo goes public (recommended once Phase 0 lands).
 - **Versioning:** SemVer `0.y.z` while pre-1.0; the single source is `[workspace.package] version`.
   `cargo xtask release-check` fails if the git tag ≠ Cargo version or `CHANGELOG.md` lacks an entry.
 - **Cadence:** tagged releases at milestones: `v0.1.0` boots to serial banner (end of Phase 0),
-  `v0.2.0` MVP 1 "Hello, Tally" (Phase 6), `v0.3.0` MVP 2 (Phase 8), `v0.4.0` hardening (Phase 9).
+  `v0.2.0` MVP 1 "Hello, CarvOS" (Phase 6), `v0.3.0` MVP 2 (Phase 8), `v0.4.0` hardening (Phase 9).
   Plus a rolling **`nightly` pre-release** re-tagged by `nightly.yml` when it is green, so there is
   always a bootable image of the latest `main`.
 - **Changelog:** `CHANGELOG.md` in Keep-a-Changelog format. Each PR adds a line under
@@ -431,12 +435,12 @@ the rest activates when the repo goes public (recommended once Phase 0 lands).
   1. `release-check`, then a **reproducible** `cargo xtask image --release`
   2. run the **full test suite against the exact release artifacts** (not a rebuild)
   3. boot-smoke: boot the release ISO under QEMU and require the banner and a shell prompt
-  4. produce artifacts: `tally-v0.y.z-x86_64.iso`, `tally-v0.y.z-data.img.zst`,
-     `stock-v0.y.z.elf` (unstripped kernel with symbols, for debugging crash reports),
-     `SHA256SUMS`, SBOM `tally-v0.y.z.cdx.json` (`cargo cyclonedx`)
+  4. produce artifacts: `carv-os-v0.y.z-x86_64.iso`, `carv-os-v0.y.z-data.img.zst`,
+     `chisel-v0.y.z.elf` (unstripped kernel with symbols, for debugging crash reports),
+     `SHA256SUMS`, SBOM `carv-os-v0.y.z.cdx.json` (`cargo cyclonedx`)
   5. **sign & attest:** Sigstore keyless signature of `SHA256SUMS` (`cosign sign-blob` via OIDC,
      `.sigstore` bundle) and **SLSA build provenance** via `actions/attest-build-provenance` for
-     every artifact, so `gh attestation verify tally-*.iso -R garrickdabbs/tally` proves it came
+     every artifact, so `gh attestation verify carv-os-*.iso -R garrickdabbs/carv-os` proves it came
      from this repo's workflow at that commit
   6. `gh release create` with generated notes, marked *pre-release* while `0.y.z`
 - **Verifying a download** (documented in README):
@@ -459,7 +463,7 @@ phase's interfaces are frozen.
 |---|---|---|
 | P0.1 | Workspace, `rust-toolchain.toml`, `.cargo/config.toml`, target `x86_64-unknown-none`, kernel linker script (higher half) | `cargo xtask build` succeeds |
 | P0.2 | `xtask`: build, fetch/pin Limine, make ISO, run QEMU, detect KVM | `cargo xtask run` boots to the Limine menu, then the kernel |
-| P0.3 | Serial driver (16550) + `kprintln!` macro + panic handler printing to serial | Serial shows `Tally stock v0.0.1 booting` |
+| P0.3 | Serial driver (16550) + `kprintln!` macro + panic handler printing to serial | Serial shows `CarvOS chisel v0.0.1 booting` |
 | P0.4 | `isa-debug-exit` + in-kernel test framework | `cargo xtask test` runs a trivial test, QEMU exits with the pass code |
 | P0.5 | `ci.yml` per §7.2: lint (fmt, clippy both targets, doc, `cargo deny`), host tests (nextest + JUnit), kernel tests and integration tests in QEMU with KVM enabled, `all-green` gate; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows a single required `all-green` check; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR |
 | P0.6 | `README.md` (build, run, verify-a-release sections), `docs/adr/0001-microkernel-rust-x86_64.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE` | Files exist; README badges for CI and Scorecard render |
@@ -480,9 +484,9 @@ phase's interfaces are frozen.
 ### Phase 2 — Capabilities, Threads, IPC, Budgets (the heart; freeze the ABI at the end)
 | ID | Task | AC |
 |---|---|---|
-| P2.1 | `tally-abi` crate: syscall numbers, error enum, message layout, rights bits | Host-compiles; documented in `docs/abi.md` |
-| P2.2 | `tally-caps` (pure): CSpace, capability slots, copy/mint/revoke, derivation tree | Proptest: after revoke(c), no descendant of c is reachable; rights never grow |
-| P2.3 | `tally-budget` (pure): CPU budget/period refill, memory limit, hierarchical carve-out, token bucket | Host tests: child limits never exceed parent; refill math correct over simulated time |
+| P2.1 | `carv-abi` crate: syscall numbers, error enum, message layout, rights bits | Host-compiles; documented in `docs/abi.md` |
+| P2.2 | `carv-caps` (pure): CSpace, capability slots, copy/mint/revoke, derivation tree | Proptest: after revoke(c), no descendant of c is reachable; rights never grow |
+| P2.3 | `carv-budget` (pure): CPU budget/period refill, memory limit, hierarchical carve-out, token bucket | Host tests: child limits never exceed parent; refill math correct over simulated time |
 | P2.4 | Kernel objects: Thread, AddressSpace, Frame, Endpoint, Notification, Budget, Reply | Kernel tests create and destroy each object via `invoke`; memory charged/credited to the budget |
 | P2.5 | Context switch, ring-3 entry (`sysretq`/`iretq`), `syscall`/`sysret` setup (STAR/LSTAR/SFMASK), SMAP/SMEP on | User-mode test thread calls `debug_putc`; user access to kernel page faults |
 | P2.6 | Scheduler: round-robin within budgets, preemption on timer, throttling on budget use-up | Test: two spinning threads with 30%/70% budgets measure within ±5% of that |
@@ -494,9 +498,9 @@ phase's interfaces are frozen.
 ### Phase 3 — User-Space Runtime & Service Manager
 | ID | Task | AC |
 |---|---|---|
-| P3.1 | `tally-rt`: `_start`, syscall wrappers, user heap (grows by mapping frames from the budget), panic → exit, `println!` via a console cap | Hello-world user program built separately from the kernel |
+| P3.1 | `carv-rt`: `_start`, syscall wrappers, user heap (grows by mapping frames from the budget), panic → exit, `println!` via a console cap | Hello-world user program built separately from the kernel |
 | P3.2 | IPC helper layer: typed request/response (`#[derive]`-based or hand-rolled), server loop macro | Echo service + client test |
-| P3.3 | `spawn(elf, caps, budget)` in `tally-rt` + `svcmgr` (loads ELFs from a Limine-module initrd for now, records BLAKE3 of each binary, restarts crashed services) | `svcmgr` starts `cons`; killing `cons` → restarted, logged |
+| P3.3 | `spawn(elf, caps, budget)` in `carv-rt` + `svcmgr` (loads ELFs from a Limine-module initrd for now, records BLAKE3 of each binary, restarts crashed services) | `svcmgr` starts `cons`; killing `cons` → restarted, logged |
 | P3.4 | `cons` console service: serial input line discipline, output; each client gets its own console cap | Two processes print through `cons` without garbled output |
 
 ### Phase 4 — Drivers ∥
@@ -511,7 +515,7 @@ phase's interfaces are frozen.
 | ID | Task | AC |
 |---|---|---|
 | P5.1 | `docs/vstore-format.md` spec + ADR | Reviewed |
-| P5.2 | `tally-vstore-core` (pure, on a `BlockDevice` trait with a RAM implementation for tests): objects, trees, commits, A/B superblocks, mkfs, open, path lookup | Host tests: create/read/rename/delete; dedup of identical blobs |
+| P5.2 | `carv-vstore-core` (pure, on a `BlockDevice` trait with a RAM implementation for tests): objects, trees, commits, A/B superblocks, mkfs, open, path lookup | Host tests: create/read/rename/delete; dedup of identical blobs |
 | P5.3 | Crash-consistency: a simulated device drops writes after a random point; recovery | Proptest: after any simulated crash, open() gives exactly the last fully committed state |
 | P5.4 | History API: log(path), read_at(path, commit), undo (forward commit), snapshots, GC with retention | Host tests for each; GC never deletes reachable objects |
 | P5.5 | `vstore` service: directory/file capabilities, attenuation (read-only, subtree), transactions, provenance from badge + svcmgr hash, storage charged to budget | Integration: file written by user A shows `principal=A program=<hash of cp>` in `log` |
@@ -520,15 +524,15 @@ phase's interfaces are frozen.
 ### Phase 6 — Typed Shell & Core Commands
 | ID | Task | AC |
 |---|---|---|
-| P6.1 | `tally-value`: Value enum, CBOR codec, schema types, table renderer | Host round-trip proptests; golden-file render tests |
-| P6.2 | ELF `.tally_schema` section: macro to embed, reader in the shell | `describe ls --json` prints the schema |
+| P6.1 | `carv-value`: Value enum, CBOR codec, schema types, table renderer | Host round-trip proptests; golden-file render tests |
+| P6.2 | ELF `.carv_schema` section: macro to embed, reader in the shell | `describe ls --json` prints the schema |
 | P6.3 | `sh`: line editing (history, backspace), parser (pipes, strings, flags, `--grant`), spawner, pipeline wiring with typed channels, render + `--json` | Integration: `echo 1 2 3 | count` → `3` |
 | P6.4 | Built-in operators: `where get select sort-by take first count each to-json from-json` | Golden tests per operator |
 | P6.5 | File coreutils: `ls cd pwd cat mkdir rm cp mv stat touch write` | Integration script: create tree, list with filters, copy, remove |
 | P6.6 | History coreutils: `log undo snapshot diff` | Integration: write, overwrite, `undo --before`, content restored; `log` shows 3 commits |
 | P6.7 | Process coreutils: `ps kill caps help clear echo date uptime` | `caps` lists the shell's own capabilities as a table |
 
-**Milestone "Hello, Tally" (MVP 1):** boot to a shell over serial; manage files with full history.
+**Milestone "Hello, CarvOS" (MVP 1):** boot to a shell over serial; manage files with full history.
 
 ### Phase 7 — Users & Authentication
 | ID | Task | AC |
@@ -566,7 +570,7 @@ phase's interfaces are frozen.
 ### Phase 10 — Stretch Ideas (pick for fun)
 - SMP: per-CPU run queues, IPIs, TLB shootdown.
 - Framebuffer console with a font, then a tiny compositor.
-- Content-defined chunking plus `vstore` sync between two Tally VMs (replication = pushing commits, like git).
+- Content-defined chunking plus `vstore` sync between two CarvOS VMs (replication = pushing commits, like git).
 - Package manager where each package declares the capabilities it needs (install shows a
   "this program wants: net:tcp:*:443, read ~/Documents" prompt).
 - A WASM runtime as the user-program format (portable and sandboxed by design).
@@ -582,11 +586,11 @@ P0 ──► P1 ──► P2 (ABI freeze) ──┬──► P3 ──┬──�
                                  │         ├──► P4.2 netd ──────────────────────► P8 ────────┘
                                  │         └──► P3.4 cons ──► P6.3 sh ──► P6.4/6.7
  (from P0) P5.2–P5.4 vstore-core ┘  (pure crates can start early, host-tested)
- (from P0) P6.1 tally-value, P2.2 tally-caps, P2.3 tally-budget
+ (from P0) P6.1 carv-value, P2.2 carv-caps, P2.3 carv-budget
 ```
 
 Recommended team shape (max ~3–4 concurrent agents to limit merge conflicts):
-- **Agent K (kernel):** P0 → P1 → P2 → P9.4, in order. Owns `kernel/`, `tally-abi`.
+- **Agent K (kernel):** P0 → P1 → P2 → P9.4, in order. Owns `kernel/`, `carv-abi`.
 - **Agent L (libraries):** P2.2, P2.3, P5.2–P5.4, P6.1 as pure crates, starting on day one.
 - **Agent S (services):** P3 → P4 → P5.5 → P8, after the ABI freeze.
 - **Agent U (userland):** P6.2–P6.7 → P7, after P3.
@@ -601,7 +605,7 @@ Each agent works on a branch named `p<phase>.<task>-short-name` and opens one PR
 Paste this to a Claude agent for each task:
 
 ```
-You are working on Tally OS (repo: github.com/<you>/tally). Read CLAUDE.md and docs/PLAN.md first.
+You are working on CarvOS (repo: github.com/garrickdabbs/carv-os). Read CLAUDE.md and docs/PLAN.md first.
 
 Task: <ID> — <title>
 Acceptance criteria: <copy AC from PLAN.md>
@@ -622,7 +626,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | in progress | P0.1 in review; P0.5/P0.7/P0.8 are the GitHub infra tasks (§7) |
+| P0 Scaffolding & Boot | in progress | P0.1 in review; P0.5/P0.7/P0.8 are the GitHub infra tasks (§7); project renamed to CarvOS |
 | P1 Kernel Core | not started | |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |
@@ -643,7 +647,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 |---|---|
 | Triple faults / silent hangs are hard for agents to debug | Serial logging from the first instruction; QEMU `-d int,cpu_reset -D qemu.log` in `xtask run --debug`; gdb stub (`-s -S`) and an `xtask gdb` helper; timeout on every QEMU test run |
 | Scope creep: four pillars is a lot | MVP 1 needs only caps + vstore + shell; budgets can start as "count only, no enforcement" and gain enforcement in P9 |
-| ABI churn breaks parallel work | Freeze at P2.10; changes require an ADR and a version bump in `tally-abi` |
+| ABI churn breaks parallel work | Freeze at P2.10; changes require an ADR and a version bump in `carv-abi` |
 | Unsafe Rust sprawl | `#![deny(unsafe_op_in_unsafe_fn)]`; every `unsafe` block needs a `// SAFETY:` comment; keep unsafe inside the kernel and driver modules |
 | Filesystem corruption | Pure core with proptested crash consistency *before* it touches a disk; A/B superblocks; checksums on every object |
 | Agents claim "done" without proof | AC are machine-checkable; CI must be green; PR template requires pasted test output |
@@ -659,7 +663,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 - Philipp Oppermann, *Writing an OS in Rust* (blog_os): boot, paging, interrupts, allocators, testing.
 - OSDev Wiki: APIC, ACPI, PCI, virtio, 16550 UART.
 - seL4 manual and whitepaper: capability derivation, IPC, MCS scheduling contexts.
-- Fuchsia Zircon docs: handles and rights (a capability model close to Tally's).
+- Fuchsia Zircon docs: handles and rights (a capability model close to CARV's).
 - Limine protocol spec (`limine` crate docs).
 - virtio 1.2 specification (OASIS).
 - smoltcp examples; Nushell documentation (structured pipelines); git internals (object model).
