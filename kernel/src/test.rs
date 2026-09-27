@@ -234,12 +234,13 @@ fn paging_refuses_pages_outside_the_dynamic_region() {
     let addr = VirtAddr::new(paging::KERNEL_DYNAMIC_BASE + 0x50_0000);
     let page = Page::containing_address(addr);
     let a = frame::allocate().unwrap();
-    let b = frame::allocate().unwrap();
     if let Err((e, returned)) = paging::map(page, a, paging::KERNEL_DATA) {
         // The test is about to fail anyway, but the frame still goes back to its owner (#43).
         frame::free(returned);
         panic!("first mapping of {addr:#x} failed: {e}");
     }
+    // Allocated only once the first mapping holds, so no frame is in flight on the failure path.
+    let b = frame::allocate().unwrap();
     match paging::map(page, b, paging::KERNEL_DATA) {
         Err((paging::MapError::Mapper(_), returned)) => frame::free(returned),
         other => panic!("expected a mapper error, got {other:?}"),
