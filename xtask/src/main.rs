@@ -1647,7 +1647,8 @@ fn workspace_version(manifest: &str) -> Option<String> {
         if in_table && let Some(rest) = t.strip_prefix("version") {
             let rest = rest.trim_start();
             if let Some(v) = rest.strip_prefix('=') {
-                return Some(v.trim().trim_matches('"').to_string());
+                // Basic ("...") or literal ('...') string; strip either kind of quote.
+                return Some(v.trim().trim_matches(['"', '\'']).to_string());
             }
         }
     }
