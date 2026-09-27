@@ -333,8 +333,9 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
 (P9.6, P9.7). All workflow files live under `.github/` (layout in §4).
 
 ### 7.1 Repository governance
-- **Ruleset on `main`** (Settings → Rules): require a pull request, require the `all-green` status
-  check, block force-pushes and deletion, require conversation resolution. *Not* linear history:
+- **Ruleset on `main`** (Settings → Rules): require a pull request, require the status checks
+  `build`, `boot-smoke`, `security`, `docs` and `perf` (one per README badge), block force-pushes
+  and deletion, require conversation resolution. *Not* linear history:
   PRs merge with **merge commits** so stacked PRs retarget cleanly (learned in Phase 0; squashing a
   stacked base makes the next PR conflict).
   Set **"do not allow bypass"** so even the maintainer merges through CI. Solo maintainer: approvals
@@ -353,20 +354,24 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
 - **PR titles** are `<TaskID>: <title>` (e.g. `P2.7: IPC send/recv/call`); the release notes
   generator groups by that prefix.
 
-### 7.2 Build CI — `.github/workflows/ci.yml`
-Triggers: `pull_request`, `push` to `main`, `merge_group`, `workflow_dispatch`.
-`concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }` for PRs.
+### 7.2 Build, test and quality workflows — one per README badge
+Each concern is its own workflow so it has its own badge, its own required check, and its own
+history. All trigger on `pull_request`, `push` to `main`, `merge_group` and `workflow_dispatch`;
+`concurrency` cancels superseded PR runs; top-level `permissions: contents: read`.
 
-| Job | What it does | Timeout |
-|---|---|---|
-| `lint` | `cargo fmt --check`; `cargo clippy --all-targets -D warnings` for host crates *and* `-p chisel --target x86_64-unknown-none`; `cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`; `cargo deny check` | 10 min |
-| `host-tests` | `cargo nextest run --workspace --locked` (layer 1), JUnit report uploaded and summarized in `$GITHUB_STEP_SUMMARY` | 15 min |
-| `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask smoke --timeout 120` boots UEFI, BIOS and `panic-test` scenarios and checks the serial output; uploads `target/smoke/*.log` | 30 min |
-| `docs-gate` (PRs only) | `cargo xtask docs-gate --base origin/<base>`: code changes must carry `CHANGELOG.md`; `xtask` changes must update README/CLAUDE.md/PLAN; workflow changes must update PLAN §7/README; `docs/abi.md` changes need an ADR. Skipped for Dependabot PRs (the bump PR is its own record) and when the PR body contains `docs-gate: skip` (with a reason). | 10 min |
-| `kernel-tests` (from P0.4) | `cargo xtask test --kernel` (layer 2, `isa-debug-exit`) | 20 min |
-| `integration` (from P0.4) | `cargo xtask test --integration` (layer 3); uploads `target/serial.log`, `qemu.log`, and the ISO on failure | 30 min |
-| `image` (push to `main` only) | `cargo xtask image --release`; uploads `carv-<sha>.iso` as a 7-day artifact so the maintainer can boot the latest `main` | 15 min |
-| `all-green` | `needs:` every gate job, `if: always()`, fails unless each is `success` (`docs-gate` may be `skipped`). **This is the only required status check**, so adding jobs never means touching the ruleset. | 1 min |
+| Workflow (badge) | Job (required check) | What it does | Timeout |
+|---|---|---|---|
+| **Build** `build.yml` | `build` | `cargo fmt --check`; clippy `-D warnings` for host crates *and* `-p chisel --target x86_64-unknown-none`; `cargo xtask build` debug and `--release` (higher-half layout verified); `cargo test --workspace --locked`; `cargo xtask image --release`; ISO uploaded as a 7-day artifact on `main` | 20 min |
+| **CI** `ci.yml` | `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask smoke --timeout 120` boots UEFI, BIOS and `panic-test` scenarios and asserts the serial output; uploads `target/smoke/*.log`. `cargo xtask test` (in-kernel + integration, layers 2–3) joins here in P0.4 | 30 min |
+| **Security** `security.yml` | `security` | `cargo deny check` (advisories, licenses, bans, sources); `cargo audit --deny warnings` with a fresh RustSec DB; clippy with only `undocumented_unsafe_blocks` as an error; unsafe inventory in the job summary; every `uses:` pinned to a 40-hex SHA; no `write-all` permissions. Also runs **weekly** so new advisories surface without a code change | 15 min |
+| **Docs** `docs.yml` | `docs` | `cargo xtask docs-gate --base origin/<base>` (PRs; skipped for Dependabot and with the documented skip marker); rustdoc with `RUSTDOCFLAGS=-D warnings` (crate roots deny `missing_docs`); `lychee --offline` checks every local Markdown link and anchor | 15 min |
+| **Performance** `perf.yml` | `perf` | `cargo xtask perf --runs 5`: release-kernel loaded size, ISO size, boot-to-banner and banner-to-halt (median, KVM) against budgets in `xtask`; over budget fails; report to the job summary | 30 min |
+| **CodeQL** `codeql.yml` | `codeql (rust)`, `codeql (actions)` | GitHub code scanning of the Rust sources and of the workflow files; PRs, `main`, weekly. Advisory (not a required check) | 45 min |
+| **Scorecard** `scorecard.yml` | `scorecard` | OpenSSF Scorecard on `main` and weekly; publishes results for the README badge and to code scanning. Advisory | 15 min |
+
+The docs-gate rules: code changes must carry `CHANGELOG.md`; `xtask` changes must update
+README/CLAUDE.md/PLAN; workflow changes must update PLAN §7/README; `docs/abi.md` changes need an
+ADR. Skipped for Dependabot PRs (the bump PR is its own record).
 
 Details:
 - **Toolchain** comes from `rust-toolchain.toml`: CI runs plain `rustup toolchain install`, which
@@ -396,18 +401,17 @@ Details:
 | Dependency updates | **Dependabot** for `cargo` and `github-actions`, weekly, grouped minor/patch | `.github/dependabot.yml` |
 | Vulnerable / unlicensed / duplicate deps | **`cargo deny`** (`advisories`, `licenses` allow-list: MIT, Apache-2.0, BSD-2/3, ISC, Zlib, Unicode-3.0; `bans` on duplicate versions; `sources` = crates.io only) | `deny.toml`, `lint` job |
 | Fresh advisories without a code change | **`cargo audit`** on the nightly schedule (advisory DB moves even when code doesn't) | `nightly.yml` |
-| Unsafe-code discipline (mechanizes the CLAUDE.md rule) | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(unsafe_op_in_unsafe_fn)]` in every crate; `cargo geiger` unsafe-count report posted to the PR summary; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `carv-rt` | crate roots, `lint` job |
+| Unsafe-code discipline (mechanizes the CLAUDE.md rule) — *live* | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(unsafe_op_in_unsafe_fn)]` + `#![deny(missing_docs)]` in every crate root; `cargo geiger` unsafe-count report posted to the PR summary; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `carv-rt` | crate roots, `lint` job |
 | Undefined behaviour in host-testable code | **Miri**: `cargo miri test` on the pure crates (`carv-caps`, `carv-value`, `carv-vstore-core`, `carv-budget`) | `nightly.yml` |
 | Fuzzing (P9.3) | `cargo fuzz` for 20 min per target nightly; corpus cached as an artifact; a crash uploads the input and opens/updates an issue labeled `kind:security` | `nightly.yml` |
 | Actions supply chain | Every action pinned to a **full commit SHA** (Dependabot bumps them); top-level `permissions: contents: read`, elevated per job only (`id-token: write`, `attestations: write`, `contents: write` for release); no long-lived secrets anywhere, signing is keyless via OIDC | all workflows |
-| Static analysis | **CodeQL** code scanning with the Rust extractor; **OpenSSF Scorecard** workflow with a README badge, target ≥ 7 by Phase 9 | `codeql.yml`, `scorecard.yml` |
-| Secrets & reporting | Secret scanning + push protection; Dependabot alerts; **private vulnerability reporting** enabled; `SECURITY.md` with the disclosure process and a plain statement that this is a hobby OS with no security guarantees | repo settings, `SECURITY.md` |
+| Static analysis | **CodeQL** code scanning (Rust + Actions) on PRs, `main` and weekly; **OpenSSF Scorecard** weekly with a README badge, target ≥ 7 by Phase 9 — *both live* | `codeql.yml`, `scorecard.yml` |
+| Secrets & reporting | Secret scanning + push protection, Dependabot alerts + security updates, **private vulnerability reporting** — *all enabled 2026-09-27 when the repo went public*; `SECURITY.md` with the disclosure process and a plain statement that this is a hobby OS with no security guarantees | repo settings, `SECURITY.md` |
 | Kernel hardening tests | W^X, guard pages, SMEP/SMAP, user/kernel isolation each have an in-kernel test that CI runs (P9.4) | `kernel-tests` job |
 | Threat model | `docs/threat-model.md` (P9.5) lists assets, trust boundaries (kernel ↔ services ↔ user programs ↔ network), and which controls above cover each threat | `docs/` |
 
-**Visibility note:** CodeQL, secret scanning push protection, and Scorecard are **free only for
-public repositories**. While the repo is private, Dependabot and `cargo deny`/`audit` still work;
-the rest activates when the repo goes public (recommended once Phase 0 lands).
+**Visibility:** the repository has been public since 2026-09-27, so CodeQL, secret-scanning push
+protection, Scorecard and rulesets are all available at no cost.
 
 ### 7.4 Test infrastructure on GitHub
 - **Documentation gate.** `cargo xtask docs-gate` compares the change set against the merge-base
@@ -415,7 +419,7 @@ the rest activates when the repo goes public (recommended once Phase 0 lands).
   above; the logic is a pure, unit-tested function in `xtask`). It runs twice: in CI on every PR,
   and as a **Claude Code Stop hook** (`.claude/settings.json`) so an agent cannot end a task with
   undocumented code. Escape hatch: `docs-gate: skip` plus a reason in the PR body.
-- **Per-PR:** layers 1–3 (§6) via `ci.yml`. Integration tests talk to the shell in `--json` mode so
+- **Per-PR:** layer 1 via `build.yml`, layers 2–3 via `ci.yml` (boot smoke now, `cargo xtask test` from P0.4), plus the Security, Docs and Performance workflows. Integration tests talk to the shell in `--json` mode so
   assertions are exact. Failures always upload the serial log, QEMU log, and the ISO that failed.
 - **Nightly — `.github/workflows/nightly.yml`** (`schedule: cron '0 6 * * *'` + `workflow_dispatch`):
   long-running and drift-detecting jobs that are too slow or too noisy for PRs:
@@ -641,7 +645,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | in progress | P0.1–P0.2 done; P0.3 in review; P0.5 (CI, deny, Dependabot, docs gate) and P0.6 (README, CHANGELOG, SECURITY, LICENSE done; ADR-0001 pending); P0.7 ruleset pending repo visibility; P0.8 not started |
+| P0 Scaffolding & Boot | in progress | P0.1–P0.3 done; P0.5 done (Build/CI/Security/Docs/Performance/CodeQL/Scorecard workflows); P0.6 done except ADR-0001; P0.7 ruleset created 2026-09-27; P0.8 not started |
 | P1 Kernel Core | not started | |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |

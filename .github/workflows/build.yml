@@ -1,0 +1,56 @@
+# Build: does the code compile, link correctly, pass its unit tests and lints?
+# Design: docs/PLAN.md §7.2. Every action is pinned to a full commit SHA (Dependabot bumps them).
+
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install the pinned toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy (host)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: clippy (kernel)
+        run: cargo clippy -p chisel --target x86_64-unknown-none --locked -- -D warnings
+      - name: kernel debug build + layout check
+        run: cargo xtask build
+      - name: kernel release build + layout check
+        run: cargo xtask build --release
+      - name: host unit tests
+        run: cargo test --workspace --locked
+      - name: install xorriso
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xorriso
+      - name: bootable ISO (release)
+        run: cargo xtask image --release
+      - name: upload ISO artifact (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: carv-os-${{ github.sha }}
+          path: target/carv-os.iso
+          retention-days: 7

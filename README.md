@@ -1,5 +1,14 @@
 # CarvOS
 
+[![Build](https://github.com/garrickdabbs/carv-os/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/garrickdabbs/carv-os/actions/workflows/build.yml)
+[![CI](https://github.com/garrickdabbs/carv-os/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/garrickdabbs/carv-os/actions/workflows/ci.yml)
+[![Security](https://github.com/garrickdabbs/carv-os/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/garrickdabbs/carv-os/actions/workflows/security.yml)
+[![Docs](https://github.com/garrickdabbs/carv-os/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/garrickdabbs/carv-os/actions/workflows/docs.yml)
+[![Performance](https://github.com/garrickdabbs/carv-os/actions/workflows/perf.yml/badge.svg?branch=main)](https://github.com/garrickdabbs/carv-os/actions/workflows/perf.yml)
+[![CodeQL](https://github.com/garrickdabbs/carv-os/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/garrickdabbs/carv-os/security/code-scanning)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/garrickdabbs/carv-os/badge)](https://scorecard.dev/viewer/?uri=github.com/garrickdabbs/carv-os)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **CARV: Capability Authority & Resource Versioning.** A hobby operating system, written from scratch
 in Rust for x86_64, that treats four things Linux, Unix and Windows bolt on afterwards as parts of
 the base design:
@@ -73,6 +82,7 @@ Everything goes through `cargo xtask` (a small Rust program in [`xtask/`](xtask/
 | `cargo xtask run [flags]` | Build the image and boot it in QEMU with the serial console on your terminal. |
 | `cargo xtask smoke [--release] [--timeout SECS]` | Boot the image under UEFI, BIOS, and with a deliberate panic, and check the serial output. |
 | `cargo xtask docs-gate [--base REF]` | Fail if code changed without matching documentation changes (see [Contributing](#contributing)). |
+| `cargo xtask perf [--runs N]` | Measure release-kernel and ISO size and boot timings (median of N boots) against budgets; report in `target/perf/report.md`. |
 | `cargo xtask help` | List commands. |
 
 `run` flags:
@@ -97,18 +107,22 @@ Notes:
 
 ## Testing
 
-| Layer | Command | What it covers |
-|---|---|---|
-| Host unit tests | `cargo test --workspace` | Pure Rust logic that compiles for the host: `xtask`, and the `crates/*` libraries as they arrive. |
-| Boot smoke tests | `cargo xtask smoke` | Real boots in QEMU: UEFI, BIOS, and the panic path. Serial logs are saved to `target/smoke/*.log`. |
-| Lint | `cargo fmt --all --check` · `cargo clippy --all-targets -- -D warnings` · `cargo clippy -p chisel --target x86_64-unknown-none -- -D warnings` | Formatting and warnings-as-errors for host and kernel code. |
-| Dependencies | `cargo deny check` | Advisories, license allow-list, duplicate versions, crates.io-only sources ([`deny.toml`](deny.toml)). |
+Each badge at the top of this file is one GitHub Actions workflow; each runs on every pull request
+and on `main`, and each is a required check before a PR can merge.
 
-`cargo xtask test` — one command that runs every layer, including in-kernel tests via
-`isa-debug-exit` — arrives in Phase 0 task P0.4. Until then, run the commands above.
+| Check | Workflow | Locally | What it covers |
+|---|---|---|---|
+| **Build** | [`build.yml`](.github/workflows/build.yml) | `cargo fmt --all --check` · `cargo clippy --workspace --all-targets -- -D warnings` · `cargo clippy -p chisel --target x86_64-unknown-none -- -D warnings` · `cargo xtask build [--release]` · `cargo test --workspace` · `cargo xtask image --release` | Formatting, warnings-as-errors, debug and release kernel builds with layout verification, host unit tests, a bootable ISO (uploaded as an artifact on `main`). |
+| **CI** | [`ci.yml`](.github/workflows/ci.yml) | `cargo xtask smoke` | The end-to-end gate: real QEMU boots under UEFI, BIOS and the panic path, with the serial output asserted. Logs in `target/smoke/*.log`. In-kernel and integration tests (`cargo xtask test`) join here in P0.4. |
+| **Security** | [`security.yml`](.github/workflows/security.yml) | `cargo deny check` · `cargo audit` · `cargo clippy … -D clippy::undocumented_unsafe_blocks` | RustSec advisories (also weekly, so new advisories are caught without a code change), license allow-list, wildcard/duplicate dependency policy, crates.io-only sources, every `unsafe` block documented, every Action pinned to a commit SHA, no `write-all` workflow permissions. |
+| **Docs** | [`docs.yml`](.github/workflows/docs.yml) | `cargo xtask docs-gate` · `RUSTDOCFLAGS=-D warnings cargo doc --no-deps` | Documentation travels with code (see [Contributing](#contributing)), rustdoc builds warning-free with `missing_docs` denied, and every local Markdown link and anchor resolves. |
+| **Performance** | [`perf.yml`](.github/workflows/perf.yml) | `cargo xtask perf` | Release-kernel loaded size, ISO size, boot-to-banner and banner-to-halt time (median of 5 boots under KVM) against budgets set in `xtask`. A size or boot-time regression fails the check; the report lands in the job summary. |
+| **CodeQL** | [`codeql.yml`](.github/workflows/codeql.yml) | — | Static analysis of the Rust sources and of the workflow files themselves; findings under *Security → Code scanning*. |
+| **Scorecard** | [`scorecard.yml`](.github/workflows/scorecard.yml) | — | OpenSSF Scorecard: an outside-in audit of this repository's supply-chain practices, published weekly. |
 
-All of these run in CI on every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)),
-and `main` accepts only pull requests whose `all-green` check passed.
+Repository-level protections that are not workflows: secret scanning with push protection,
+Dependabot alerts and security updates, private vulnerability reporting, and weekly Dependabot
+version updates for crates and Actions.
 
 ## Installing
 
@@ -155,8 +169,8 @@ This is a solo hobby project built largely by AI coding agents following [`docs/
 but the workflow is the same for anyone:
 
 1. One task ID per branch and PR (`p1.2-frame-allocator`), titled `P1.2: …`.
-2. Open a PR against `main`. CI runs lint, host tests, boot smoke tests, `cargo deny`, and the
-   **docs gate**; the single required check is `all-green`. Merge with a merge commit.
+2. Open a PR against `main`. The Build, CI, Security, Docs and Performance workflows run; all five
+   are required checks. Merge with a merge commit.
 3. **Documentation travels with code.** The docs gate (`cargo xtask docs-gate`) fails a PR that
    changes code under `kernel/`, `crates/`, `services/`, `userland/`, `xtask/` or `Cargo.toml`
    without a `CHANGELOG.md` entry; changes `xtask` without updating this README, `CLAUDE.md` or the

@@ -1,0 +1,77 @@
+# Security: dependency advisories and licenses, unsafe-code discipline, and workflow hygiene.
+# Runs on every PR, on main, and weekly so a new advisory is caught without a code change.
+# Design: docs/PLAN.md §7.3.
+
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install the pinned toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: cargo-deny (advisories, licenses, bans, sources)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features
+
+      - name: install cargo-audit
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-audit
+      - name: cargo-audit (RustSec, fresh database)
+        run: cargo audit --deny warnings
+
+      - name: unsafe-code discipline (every unsafe block documented)
+        # `#![deny(clippy::undocumented_unsafe_blocks)]` is set in every crate root; this runs
+        # clippy with only that lint so a violation is reported here, under "security".
+        run: |
+          cargo clippy -p chisel --target x86_64-unknown-none --locked -- -A clippy::all -D clippy::undocumented_unsafe_blocks
+          cargo clippy --workspace --all-targets --locked -- -A clippy::all -D clippy::undocumented_unsafe_blocks
+
+      - name: unsafe inventory (informational)
+        run: |
+          {
+            echo "### unsafe blocks per file"
+            echo '```'
+            grep -rc "unsafe" --include='*.rs' kernel/src xtask/src crates services userland 2>/dev/null | grep -v ':0$' | sort -t: -k2 -nr || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: every GitHub Action is pinned to a commit SHA
+        run: |
+          set -euo pipefail
+          bad=$(grep -rhoE '^\s*-?\s*uses:\s*[^ ]+' .github/workflows | sed -E 's/.*uses:\s*//' | grep -vE '@[0-9a-f]{40}( |$)' || true)
+          if [ -n "$bad" ]; then echo "unpinned actions:"; echo "$bad"; exit 1; fi
+          echo "all actions pinned"
+
+      - name: no workflow requests write permissions at the top level
+        run: |
+          set -euo pipefail
+          if grep -rlE '^permissions:\s*write-all' .github/workflows; then echo "write-all found"; exit 1; fi
+          echo "ok"
