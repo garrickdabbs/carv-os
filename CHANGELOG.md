@@ -12,6 +12,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   release assets (#35). Fuller `.gitignore`; `CONTRIBUTING.md` added (#34, #35).
 
 ### Added
+- P1.3: paging — `kernel::mm::paging` adopts Limine's page tables through the HHDM (`OffsetPageTable`) with
+  `map`/`unmap`/`translate` and a kernel dynamic region at `0xffff9000_00000000`; in-kernel test maps, writes,
+  reads back through the HHDM alias, translates and unmaps; new smoke scenarios `pfault` (unmapped access is
+  reported by the `#PF` handler) and `sovflw` (recursion on a guard-paged stack ends in the double-fault
+  handler — the test deferred from P1.1).
 - P1.2: physical frame allocator — `crates/carv-frames` (pure bitmap allocator, 5 host tests) and
   `kernel::mm::frame` (bitmap carved from the first usable Limine region via the HHDM; frame 0 never handed
   out); boot prints free/total frames; in-kernel test allocates and frees 10 000 frames.
@@ -21,6 +26,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   scenario prove the double-fault path; in-kernel tests cover `int3` and the loaded selectors.
 
 ### Fixed
+- `carv-frames::free_range` guards its scan-hint update against out-of-range starts explicitly (the hint could
+  never actually move past the bitmap; a test now proves the out-of-range case is harmless) (#38).
 - `release-check` fails instead of silently continuing when `GITHUB_OUTPUT` cannot be written, and the release
   workflow refuses to publish without an explicit prerelease decision (#26); `[workspace.package]` parsing
   tolerates TOML comments (#27); the nightly stress loop checks `cargo xtask smoke`'s exit code rather than

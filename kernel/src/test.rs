@@ -160,6 +160,48 @@ fn frame_allocator_ten_thousand_frames_unique_and_restored() {
 }
 
 #[test_case]
+fn paging_map_write_translate_unmap() {
+    use crate::mm::{frame, paging};
+    use x86_64::VirtAddr;
+    use x86_64::structures::paging::Page;
+
+    let addr = VirtAddr::new(paging::KERNEL_DYNAMIC_BASE + 0x40_0000);
+    let page = Page::containing_address(addr);
+    assert_eq!(
+        paging::translate(addr),
+        None,
+        "test page must start unmapped"
+    );
+
+    let f = frame::allocate().expect("frame");
+    paging::map(page, f, paging::KERNEL_DATA).expect("map");
+    assert_eq!(
+        paging::translate(addr),
+        Some(f.0),
+        "translate must return the mapped frame"
+    );
+
+    // Write through the new mapping, read back through the HHDM alias of the same frame.
+    let hhdm = crate::HHDM.response().unwrap().offset;
+    // SAFETY: `addr` was just mapped to `f` (writable, kernel-only) and the HHDM maps `f` too;
+    // both pointers are valid, aligned and refer to memory nobody else uses.
+    unsafe {
+        core::ptr::write_volatile(addr.as_mut_ptr::<u64>(), 0x5EED_F00D_0000_1337);
+        let via_hhdm = core::ptr::read_volatile((hhdm + f.0.as_u64()) as *const u64);
+        assert_eq!(via_hhdm, 0x5EED_F00D_0000_1337);
+    }
+
+    let unmapped = paging::unmap(page).expect("unmap");
+    assert_eq!(unmapped, f);
+    assert_eq!(
+        paging::translate(addr),
+        None,
+        "page must be gone after unmap"
+    );
+    frame::free(f);
+}
+
+#[test_case]
 fn interrupts_are_disabled_at_boot() {
     // Limine hands us the CPU with IF clear and we have no IDT yet; anything else is a bug.
     assert!(!crate::arch::x86_64::interrupts_enabled());

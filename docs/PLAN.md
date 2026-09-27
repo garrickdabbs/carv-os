@@ -505,7 +505,7 @@ phase's interfaces are frozen.
 |---|---|---|
 | P1.1 | GDT + TSS (with IST stacks for double fault), IDT, exception handlers | Test triggers `int3`, handler runs; forced stack overflow → double-fault message, not triple fault — **done 2026-09-27** (`x86_64` crate; `#BP` test; `double-fault-test` smoke scenario forces an unusable stack, since a recursion overflow is only deterministic once P1.3 adds a kernel-stack guard page — that test is added then) |
 | P1.2 | Physical frame allocator from the Limine memory map (bitmap or buddy) | Kernel test: allocate/free 10k frames, no duplicates, count restored — **done 2026-09-27** (`crates/carv-frames` bitmap core, host-tested; kernel wrapper carves the bitmap from usable RAM via the HHDM) |
-| P1.3 | Paging: kernel mapper using the HHDM offset, map/unmap/translate | Test maps a fresh page, writes, reads back, unmaps → page fault handler catches access |
+| P1.3 | Paging: kernel mapper using the HHDM offset, map/unmap/translate | Test maps a fresh page, writes, reads back, unmaps → page fault handler catches access — **done 2026-09-27** (`x86_64::OffsetPageTable` over Limine's CR3 tables; dynamic region at `0xffff9000_00000000`; `pfault` smoke scenario; the deferred recursion-overflow → `#DF` test now runs via a guard-paged stack, `sovflw`) |
 | P1.4 | Kernel heap (`linked_list_allocator` or custom slab) + `alloc` | `Vec`/`Box`/`BTreeMap` work in kernel tests |
 | P1.5 | Local APIC + timer (calibrated against HPET/PIT), disable legacy PIC | Timer ticks at 1 kHz; test counts ticks over a busy wait |
 | P1.6 | ACPI table parsing (`acpi` crate) for MADT/HPET/MCFG | Boot log lists APIC ID(s) and HPET address |
@@ -657,7 +657,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | Phase | Status | Notes |
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0` |
-| P1 Kernel Core | in progress | P1.1–P1.2 done 2026-09-27 |
+| P1 Kernel Core | in progress | P1.1–P1.3 done 2026-09-27 |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |
 | P4 Drivers | not started | |
