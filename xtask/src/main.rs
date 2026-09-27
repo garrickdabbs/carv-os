@@ -1000,12 +1000,13 @@ fn docs_gate(args: &[String]) -> Result<(), String> {
     changed.dedup_by(|a, b| a.path == b.path);
 
     // The changelog rule inspects content, not just paths: something must have been added under
-    // the Unreleased heading.
+    // the Unreleased heading — or, for a release PR, a new version heading must have appeared
+    // (that is where the Unreleased entries went).
     let changelog_grew = {
         let before =
             git(&repo, &["show", &format!("{merge_base}:CHANGELOG.md")]).unwrap_or_default();
         let after = fs::read_to_string(repo.join("CHANGELOG.md")).unwrap_or_default();
-        unreleased_grew(&before, &after)
+        unreleased_grew(&before, &after) || version_section_added(&before, &after)
     };
 
     let violations = docs_gate_violations(&changed, changelog_grew);
@@ -1110,6 +1111,42 @@ fn unreleased_grew(before: &str, after: &str) -> bool {
         .lines()
         .map(str::trim)
         .any(|l| !l.is_empty() && !l.starts_with("###") && !old.contains(&l))
+}
+
+/// Whether `after` has a `## [x.y.z]` version heading that `before` lacks: the signature of a
+/// release PR, which empties Unreleased rather than growing it. Only a real SemVer label counts
+/// (`## [0.1.1]`, `## [0.2.0-rc.1] - 2026-…`), so `## [not-a-release]` cannot satisfy the gate.
+fn version_section_added(before: &str, after: &str) -> bool {
+    fn headings(s: &str) -> Vec<&str> {
+        s.lines()
+            .map(str::trim)
+            .filter(|l| is_version_heading(l))
+            .collect()
+    }
+    let old = headings(before);
+    headings(after).iter().any(|h| !old.contains(h))
+}
+
+/// `## [MAJOR.MINOR.PATCH]` or `## [MAJOR.MINOR.PATCH-pre.N]`, optionally followed by ` - date`.
+fn is_version_heading(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("## [") else {
+        return false;
+    };
+    let Some(end) = rest.find(']') else {
+        return false;
+    };
+    let (label, tail) = rest.split_at(end);
+    if !(tail == "]" || tail.starts_with("] ")) {
+        return false;
+    }
+    let (core, pre) = label.split_once('-').unwrap_or((label, ""));
+    let numeric = core.split('.').collect::<Vec<_>>();
+    numeric.len() == 3
+        && numeric
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        && (label.find('-').is_none()
+            || (!pre.is_empty() && pre.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')))
 }
 
 /// Paths whose change means "code changed" for the documentation gate.
@@ -2024,6 +2061,34 @@ mod tests {
             "touching a released section must not count"
         );
         assert!(unreleased_grew("", "## [Unreleased]\n- first\n"));
+    }
+
+    #[test]
+    fn release_pr_counts_as_changelog_growth() {
+        let before =
+            "# C\n\n## [Unreleased]\n\n### Added\n- thing\n\n## [0.1.0] - 2026-09-27\n- released\n";
+        let released = "# C\n\n## [Unreleased]\n\n## [0.1.1] - 2026-09-28\n\n### Added\n- thing\n\n## [0.1.0] - 2026-09-27\n- released\n";
+        assert!(!unreleased_grew(before, released), "entries only moved");
+        assert!(version_section_added(before, released));
+        assert!(!version_section_added(before, before));
+        assert!(
+            !version_section_added(released, before),
+            "removing a heading is not a release"
+        );
+        let fake =
+            "# C\n\n## [Unreleased]\n\n## [not-a-release]\n- sneaky\n\n## [0.1.0] - 2026-09-27\n";
+        assert!(
+            !version_section_added(before, fake),
+            "a non-version heading must not satisfy the gate"
+        );
+        assert!(is_version_heading("## [0.1.1] - 2026-09-27"));
+        assert!(is_version_heading("## [1.2.3]"));
+        assert!(is_version_heading("## [0.2.0-rc.1] - 2026-10-01"));
+        assert!(!is_version_heading("## [Unreleased]"));
+        assert!(!is_version_heading("## [1.2]"));
+        assert!(!is_version_heading("## [1.2.x]"));
+        assert!(!is_version_heading("## [1.2.3-]"));
+        assert!(!is_version_heading("## [1.2.3]x"));
     }
 
     #[test]

@@ -9,7 +9,7 @@ members = ["kernel", "xtask", "crates/carv-frames"]
 default-members = ["xtask", "crates/carv-frames"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 repository = "https://github.com/garrickdabbs/carv-os"
 license = "MIT"

@@ -385,12 +385,13 @@ history. All trigger on `pull_request`, `push` to `main`, `merge_group` and `wor
 | **Build** `build.yml` | `build` | `cargo fmt --check`; clippy `-D warnings` for host crates *and* `-p chisel --target x86_64-unknown-none`; `cargo xtask build` debug and `--release` (higher-half layout verified); `cargo test --workspace --locked`; `cargo xtask image --release`; ISO uploaded as a 7-day artifact on `main` | 20 min |
 | **CI** `ci.yml` | `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask test --timeout 120`: host unit tests, the in-kernel test kernel booted in QEMU (`isa-debug-exit` 33/35), and the UEFI/BIOS/`panic-test` smoke scenarios with serial output asserted; uploads `target/test/*.log` and `target/smoke/*.log`. Job name stays `boot-smoke` (required check) | 30 min |
 | **Security** `security.yml` | `security` | `cargo deny check` (advisories, licenses, bans, sources); `cargo audit --deny warnings` with a fresh RustSec DB; clippy with only `undocumented_unsafe_blocks` as an error; unsafe inventory in the job summary; every `uses:` pinned to a 40-hex SHA; no `write-all` permissions. Also runs **weekly** so new advisories surface without a code change | 15 min |
-| **Docs** `docs.yml` | `docs` | `docs-gate` run from the **base branch's** xtask against the PR checkout (a PR cannot weaken the gate it is judged by); requires *new content under Unreleased* in CHANGELOG.md, a *new* ADR file for `docs/abi.md`, and a skip marker only with a ≥ 20-character reason (PRs; Dependabot exempt); rustdoc with `RUSTDOCFLAGS=-D warnings` (crate roots deny `missing_docs`); `lychee --offline` checks every local Markdown link and anchor | 15 min |
+| **Docs** `docs.yml` | `docs` | `docs-gate` run from the **base branch's** xtask against the PR checkout (a PR cannot weaken the gate it is judged by); requires *new content under Unreleased* in CHANGELOG.md, a *new* ADR file for `docs/abi.md`, and a skip marker only with a ≥ 20-character reason (PRs; Dependabot exempt); rustdoc with `RUSTDOCFLAGS=-D warnings` (crate roots deny `missing_docs`); `lychee --offline` checks every local Markdown link and anchor — or, in a release PR, a new `## [x.y.z]` version heading | 15 min |
 | **Performance** `perf.yml` | `perf` | `cargo xtask perf --runs 5`: release-kernel loaded size, ISO size, boot-to-banner and banner-to-halt (median, KVM) against budgets in `xtask`; over budget fails; report to the job summary | 30 min |
 | **CodeQL** `codeql.yml` | `codeql (rust)`, `codeql (actions)` | GitHub code scanning of the Rust sources and of the workflow files; PRs, `main`, weekly. Advisory (not a required check) | 45 min |
 | **Scorecard** `scorecard.yml` | `scorecard` | OpenSSF Scorecard on `main` and weekly; publishes results for the README badge and to code scanning. Advisory | 15 min |
 
-The docs-gate rules: code changes must add content under `## [Unreleased]` in `CHANGELOG.md`; `xtask`
+The docs-gate rules: code changes must add content under `## [Unreleased]` in `CHANGELOG.md` (a release
+PR satisfies this by adding the new `## [x.y.z]` heading the entries moved under); `xtask`
 changes must update README/CLAUDE.md/PLAN; workflow changes must update PLAN §7/README; `docs/abi.md`
 changes need a *new* ADR file. Skipped for Dependabot PRs (the bump PR is its own record) or with
 `docs-gate: skip — <reason ≥ 20 chars>` in the PR body.
@@ -440,7 +441,8 @@ protection, Scorecard and rulesets are all available at no cost.
 ### 7.4 Test infrastructure on GitHub
 - **Documentation gate.** `cargo xtask docs-gate` compares the change set against the merge-base
   and fails (exit 2) when code moved without its documentation (rules in the `docs-gate` row
-  above; the logic is a pure, unit-tested function in `xtask`). CI runs it on every PR from the
+  above; the logic is a pure, unit-tested function in `xtask`; a release PR satisfies the CHANGELOG
+  rule by adding the new `## [x.y.z]` heading instead of an Unreleased line). CI runs it on every PR from the
   *base branch's* xtask; agents run it locally before opening a PR. A Claude Code Stop hook that runs
   the gate is an optional, **uncommitted** personal setting (`.claude/settings.local.json`;
   `.claude/` is gitignored): a committed settings file would run shell commands on every
@@ -471,6 +473,8 @@ protection, Scorecard and rulesets are all available at no cost.
   `cargo xtask release-check` fails if the git tag ≠ Cargo version or `CHANGELOG.md` lacks an entry.
 - **Cadence:** tagged releases at milestones: `v0.1.0` boots to serial banner (end of Phase 0),
   `v0.2.0` MVP 1 "Hello, CarvOS" (Phase 6), `v0.3.0` MVP 2 (Phase 8), `v0.4.0` hardening (Phase 9).
+  Interim `v0.1.z` releases are cut on request between milestones (`v0.1.1`, 2026-09-27: Phase 1
+  progress and reproducible builds); the milestone numbers stay reserved.
   Plus a rolling **`nightly` pre-release** re-tagged by `nightly.yml` when it is green, so there is
   always a bootable image of the latest `main`.
 - **Changelog:** `CHANGELOG.md` in Keep-a-Changelog format. Each PR adds a line under
@@ -683,7 +687,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0` |
+| P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | in progress | P1.1–P1.3 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables); **next: P1.4 kernel heap** |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |
