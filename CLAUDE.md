@@ -18,5 +18,7 @@ Read it before starting any task.
 - Every allocation path must charge a Budget.
 - Every QEMU test run has a timeout; a hang counts as a failure.
 - Don't mark a task done without pasting `cargo xtask test` output. If blocked on a design question, write it up and stop.
-- Update the status table in `docs/PLAN.md` §10 when you open a PR.
+- Update the status table in `docs/PLAN.md` §11 when you open a PR.
 - clippy with `-D warnings` and `cargo fmt` must be clean.
+- Add a line under *Unreleased* in `CHANGELOG.md` for any user-visible change.
+- Workflows: pin every action to a full commit SHA, keep top-level `permissions: contents: read`, never add secrets. Never edit the `main` ruleset or bypass CI. See PLAN.md §7.
