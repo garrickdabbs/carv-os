@@ -116,22 +116,9 @@ In-kernel tests are ordinary functions marked `#[test_case]` in the kernel crate
 builds them into a bootable test kernel, boots it under Limine in QEMU, and reads the result from the
 `isa-debug-exit` exit code, so a hang, a triple fault or a panic all count as failures.
 
-Each badge at the top of this file is one GitHub Actions workflow; each runs on every pull request
-and on `main`, and each is a required check before a PR can merge.
-
-| Check | Workflow | Locally | What it covers |
-|---|---|---|---|
-| **Build** | [`build.yml`](.github/workflows/build.yml) | `cargo fmt --all --check` · `cargo clippy --workspace --exclude chisel --all-targets -- -D warnings` · `cargo clippy -p chisel --target x86_64-unknown-none -- -D warnings` · `cargo xtask build [--release]` · `cargo test --workspace --exclude chisel` · `cargo xtask image --release` | Formatting, warnings-as-errors, debug and release kernel builds with layout verification, the kernel test binary, host unit tests, a bootable ISO (uploaded as an artifact on `main`). |
-| **CI** | [`ci.yml`](.github/workflows/ci.yml) | `cargo xtask test` | The end-to-end gate: host unit tests; the **in-kernel test binary** booted in QEMU, which reports pass/fail through the `isa-debug-exit` device (exit 33 / 35); and real UEFI, BIOS and panic-path boots with the serial output asserted. Logs in `target/test/` and `target/smoke/`. |
-| **Security** | [`security.yml`](.github/workflows/security.yml) | `cargo deny check` · `cargo audit` · `cargo clippy … -D clippy::undocumented_unsafe_blocks` | RustSec advisories (also weekly, so new advisories are caught without a code change), license allow-list, wildcard/duplicate dependency policy, crates.io-only sources, every `unsafe` block documented, every Action pinned to a commit SHA, no `write-all` workflow permissions. |
-| **Docs** | [`docs.yml`](.github/workflows/docs.yml) | `cargo xtask docs-gate` · `RUSTDOCFLAGS=-D warnings cargo doc --no-deps` | Documentation travels with code (see [Contributing](#contributing)), rustdoc builds warning-free with `missing_docs` denied, and every local Markdown link and anchor resolves. |
-| **Performance** | [`perf.yml`](.github/workflows/perf.yml) | `cargo xtask perf` | Release-kernel loaded size, ISO size, boot-to-banner and banner-to-halt time (median of 5 boots under KVM) against budgets set in `xtask`. A size or boot-time regression fails the check; the report lands in the job summary. |
-| **CodeQL** | [`codeql.yml`](.github/workflows/codeql.yml) | — | Static analysis of the Rust sources and of the workflow files themselves; findings under *Security → Code scanning*. |
-| **Scorecard** | [`scorecard.yml`](.github/workflows/scorecard.yml) | — | OpenSSF Scorecard: an outside-in audit of this repository's supply-chain practices, published weekly. |
-
-Repository-level protections that are not workflows: secret scanning with push protection,
-Dependabot alerts and security updates, private vulnerability reporting, and weekly Dependabot
-version updates for crates and Actions.
+Before opening a PR, also run `cargo fmt --all --check`, `cargo clippy --workspace --exclude chisel --all-targets -- -D warnings`,
+`cargo clippy -p chisel --target x86_64-unknown-none -- -D warnings`, `cargo deny check` and `cargo xtask perf`.
+The same checks run in CI; the workflows in [`.github/workflows/`](.github/workflows/) are their definition.
 
 ## Installing
 
@@ -178,8 +165,7 @@ This is a solo hobby project built largely by AI coding agents following [`docs/
 but the workflow is the same for anyone:
 
 1. One task ID per branch and PR (`p1.2-frame-allocator`), titled `P1.2: …`.
-2. Open a PR against `main`. The Build, CI, Security, Docs and Performance workflows run; all five
-   are required checks. Merge with a merge commit.
+2. Open a PR against `main`. All required checks must pass. Merge with a merge commit.
 3. **Documentation travels with code.** The docs gate (`cargo xtask docs-gate`) fails a PR that
    changes code under `kernel/`, `crates/`, `services/`, `userland/`, `xtask/` or `Cargo.toml`
    without a `CHANGELOG.md` entry; changes `xtask` without updating this README, `CLAUDE.md` or the
