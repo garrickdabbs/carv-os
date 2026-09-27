@@ -9,13 +9,14 @@ Read it before starting any task.
 - `cargo xtask run [--release] [--bios] [--debug] [--timeout SECS]` — boot in QEMU (serial on stdio); `--debug` logs int/reset to `target/qemu.log`; always pass `--timeout` in scripts
 - `cargo xtask smoke [--release] [--timeout SECS]` — boot UEFI, BIOS and panic scenarios in QEMU and check serial output; logs in `target/smoke/`
 - `cargo xtask docs-gate [--base REF]` — fail (exit 2) if code changed without documentation; runs in CI and as the Stop hook in `.claude/settings.json`
-- `cargo xtask test` — host unit tests + in-kernel tests + QEMU integration tests (arrives in P0.4). **Must pass before any PR.** Until then: `cargo test --workspace`, `cargo xtask smoke`, clippy, fmt, `cargo deny check`.
+- `cargo xtask perf [--runs N]` — size and boot-time budgets (release build, median of N boots); CI fails a PR that exceeds them, so if you grow the kernel deliberately, raise the budget constants in `xtask` in the same PR and say why
+- `cargo xtask test` — host unit tests + in-kernel tests + QEMU integration tests (arrives in P0.4). **Must pass before any PR.** Until then: `cargo test --workspace`, `cargo xtask smoke`, `cargo xtask perf`, clippy, fmt, `cargo deny check`.
 - `cargo xtask gdb` — boot paused with gdb stub attached
 
 ## Rules
 - One task ID per branch/PR (`p2.7-ipc`). Stay inside the directories your task names.
 - Put logic in pure `crates/*` libraries (host-testable) whenever possible; the kernel and services are thin glue.
-- Every `unsafe` block needs a `// SAFETY:` comment explaining why it is sound.
+- Every `unsafe` block needs a `// SAFETY:` comment explaining why it is sound (enforced: `#![deny(clippy::undocumented_unsafe_blocks)]` in every crate root). Every public item needs a doc comment (`#![deny(missing_docs)]`).
 - No changes to `docs/abi.md` or `crates/carv-abi` after the ABI freeze (P2.10) without a new ADR in `docs/adr/`.
 - No ambient authority: never add a global path namespace, a "root bypass", or a syscall that skips capability checks.
 - Every allocation path must charge a Budget.
@@ -24,4 +25,4 @@ Read it before starting any task.
 - Update the status table in `docs/PLAN.md` §11 when you open a PR.
 - clippy with `-D warnings` and `cargo fmt` must be clean.
 - **Documentation travels with code** (enforced by `cargo xtask docs-gate` in CI and on Stop): any change under `kernel/`, `crates/`, `services/`, `userland/`, `xtask/` or `Cargo.toml` needs a `CHANGELOG.md` line under *Unreleased*; `xtask` changes need README.md/CLAUDE.md/PLAN.md updated; workflow changes need PLAN.md §7 or README updated; `docs/abi.md` changes need an ADR. Do not disable the hook or use `docs-gate: skip` without a stated reason.
-- Workflows: pin every action to a full commit SHA, keep top-level `permissions: contents: read`, never add secrets. Never edit the `main` ruleset or bypass CI. See PLAN.md §7.
+- Workflows: one workflow per badge (`build`, `ci`, `security`, `docs`, `perf`, `codeql`, `scorecard`); pin every action to a full commit SHA, keep top-level `permissions: contents: read`, never add secrets. Never edit the `main` ruleset or bypass CI. See PLAN.md §7.

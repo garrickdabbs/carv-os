@@ -22,3 +22,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   `cargo xtask docs-gate` (code changes must carry documentation), the latter also wired as a Claude
   Code Stop hook in `.claude/settings.json`.
 - Licensed under MIT (`LICENSE`; `license = "MIT"` on every workspace crate, checked by `cargo deny`).
+- CI split into one workflow per README badge: Build, CI (boot smoke), Security (cargo-deny, cargo-audit weekly,
+  documented-unsafe lint, action-pinning check), Docs (docs gate, rustdoc, link check), Performance
+  (`cargo xtask perf`: kernel/ISO size and boot-time budgets), CodeQL (Rust + Actions), OpenSSF Scorecard.
+  Crate roots now `#![deny(clippy::undocumented_unsafe_blocks)]` and `#![deny(missing_docs)]`. Repo now public
+  with secret scanning + push protection, private vulnerability reporting and Dependabot security updates on.

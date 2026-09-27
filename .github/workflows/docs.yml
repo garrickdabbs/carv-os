@@ -1,0 +1,56 @@
+# Docs: documentation travels with code (docs gate), rustdoc builds warning-free with
+# missing_docs denied, and local Markdown links resolve.
+# Design: docs/PLAN.md §7.2 and §7.4.
+
+name: Docs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: install the pinned toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: docs gate — code changes must carry documentation
+        # Dependabot PRs are their own record. The skip marker is documented in the README.
+        if: "github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && !contains(github.event.pull_request.body, 'docs-gate: skip')"
+        run: cargo xtask docs-gate --base "origin/${{ github.base_ref }}"
+
+      - name: rustdoc (warnings are errors; missing docs are errors via crate lints)
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: |
+          cargo doc --no-deps --workspace --locked
+          cargo doc --no-deps -p chisel --target x86_64-unknown-none --locked
+
+      - name: Markdown links resolve (offline: local files and anchors)
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: >-
+            --offline --include-fragments --no-progress
+            --root-dir "${{ github.workspace }}"
+            README.md SECURITY.md CHANGELOG.md CLAUDE.md "docs/**/*.md" ".github/**/*.md"
+          fail: true

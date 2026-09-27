@@ -1,8 +1,8 @@
-# CI: the end-to-end gate — does the OS actually boot? Real QEMU boots (UEFI, BIOS, panic path)
-# with the serial output asserted. `cargo xtask test` (in-kernel tests + integration tests)
-# joins this workflow in P0.4. Design: docs/PLAN.md §7.2.
+# Performance: kernel and ISO size, boot-to-banner and banner-to-halt time (median of 5 boots
+# under KVM) against the budgets in `xtask` (`cargo xtask perf`). Fails when a budget is exceeded,
+# so a size or boot-time regression cannot land silently. The report goes to the job summary.
 
-name: CI
+name: Performance
 
 on:
   pull_request:
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: perf-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -23,8 +23,8 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  boot-smoke:
-    name: boot-smoke
+  perf:
+    name: perf
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -37,22 +37,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf xorriso
       - name: enable KVM for the runner user
-        # GitHub's Linux runners expose nested virtualisation; xtask falls back to TCG if this fails.
         continue-on-error: true
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm || true
-      - name: smoke boots (UEFI, BIOS, panic-test)
-        run: cargo xtask smoke --timeout 120
-      - name: upload serial logs
+      - name: size and boot-time budgets
+        run: cargo xtask perf --runs 5
+      - name: upload report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: smoke-serial-logs
-          path: |
-            target/smoke/*.log
-            target/qemu.log
+          name: perf-report
+          path: target/perf/report.md
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 30

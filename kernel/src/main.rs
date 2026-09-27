@@ -7,6 +7,9 @@
 #![no_std]
 #![no_main]
 #![deny(unsafe_op_in_unsafe_fn)]
+// Every `unsafe` block must carry a `// SAFETY:` comment (CLAUDE.md rule, enforced mechanically).
+#![deny(clippy::undocumented_unsafe_blocks)]
+#![deny(missing_docs)]
 
 use core::panic::PanicInfo;
 

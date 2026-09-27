@@ -11,8 +11,12 @@
 //! - `smoke [--release] [--timeout SECS]`: boot UEFI, BIOS and panic-test scenarios in QEMU and check
 //!   the serial output (CI's boot gate until `test` arrives in P0.4).
 //! - `docs-gate [--base REF]`: fail when code changed without matching documentation changes.
+//! - `perf [--runs N]`: measure kernel/ISO size and boot-to-banner time against budgets.
 //!
 //! `test` arrives in P0.4.
+
+#![deny(clippy::undocumented_unsafe_blocks)]
+#![deny(missing_docs)]
 
 use std::env;
 use std::fs;
@@ -105,6 +109,7 @@ fn main() -> ExitCode {
         Some("run") => run(&args[1..]),
         Some("smoke") => smoke(&args[1..]),
         Some("docs-gate") => docs_gate(&args[1..]),
+        Some("perf") => perf(&args[1..]),
         Some("help") | None => {
             print_help();
             Ok(())
@@ -145,6 +150,9 @@ fn print_help() {
     );
     println!(
         "  docs-gate [--base REF]           Fail if code changed without documentation (default base: main)"
+    );
+    println!(
+        "  perf [--runs N]                  Kernel/ISO size and boot timings vs budgets (report in target/perf/)"
     );
 }
 
@@ -820,6 +828,289 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+// ---------------------------------------------------------------- perf
+
+/// Size budget for the release kernel's loaded segments (text + rodata + data + bss).
+/// Generous today (the kernel is ~20 KiB); tighten as the design settles.
+const KERNEL_LOAD_BYTES_MAX: u64 = 1024 * 1024;
+/// Size budget for the bootable ISO (Limine + kernel + config).
+const ISO_BYTES_MAX: u64 = 16 * 1024 * 1024;
+/// Boot-to-banner budget (QEMU spawn to `CarvOS chisel v` on serial), enforced only under KVM
+/// because TCG timings say more about the host than the kernel. OVMF alone costs ~2 s.
+const BOOT_TO_BANNER_MAX: Duration = Duration::from_secs(8);
+/// Kernel work between the banner and the final "halting" line, enforced under KVM.
+const BANNER_TO_HALT_MAX: Duration = Duration::from_secs(2);
+
+/// Loaded-segment sizes from an ELF64 file's program headers.
+struct LoadSizes {
+    text: u64,
+    rodata: u64,
+    data: u64,
+    bss: u64,
+}
+
+impl LoadSizes {
+    fn total(&self) -> u64 {
+        self.text + self.rodata + self.data + self.bss
+    }
+}
+
+/// Sums PT_LOAD segments by permission: RX → text, R → rodata, RW file bytes → data, RW
+/// memsz beyond filesz → bss.
+fn elf64_load_sizes(bytes: &[u8]) -> Result<LoadSizes, String> {
+    const PT_LOAD: u32 = 1;
+    const PF_X: u32 = 1;
+    const PF_W: u32 = 2;
+    elf64_entry(bytes)?; // validates the header
+    let u16_at = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]);
+    let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+    let u64_at = |o: usize| u64::from_le_bytes(bytes[o..o + 8].try_into().unwrap());
+    let phoff = u64_at(32) as usize;
+    let phentsize = u16_at(54) as usize;
+    let phnum = u16_at(56) as usize;
+    if phentsize < 56 || phoff + phnum * phentsize > bytes.len() {
+        return Err("kernel ELF program headers are out of bounds".into());
+    }
+    let mut sizes = LoadSizes {
+        text: 0,
+        rodata: 0,
+        data: 0,
+        bss: 0,
+    };
+    for i in 0..phnum {
+        let ph = phoff + i * phentsize;
+        if u32_at(ph) != PT_LOAD {
+            continue;
+        }
+        let flags = u32_at(ph + 4);
+        let filesz = u64_at(ph + 32);
+        let memsz = u64_at(ph + 40);
+        if flags & PF_X != 0 {
+            sizes.text += memsz;
+        } else if flags & PF_W != 0 {
+            sizes.data += filesz;
+            sizes.bss += memsz.saturating_sub(filesz);
+        } else {
+            sizes.rodata += memsz;
+        }
+    }
+    Ok(sizes)
+}
+
+/// Boot timing of one QEMU run: when the banner appeared and when the kernel reached "halting".
+struct BootTiming {
+    banner_after: Duration,
+    halt_after_banner: Option<Duration>,
+}
+
+/// Measures release-kernel and ISO size plus boot timings (median of `--runs`, default 3) and
+/// checks them against the budgets above. Writes `target/perf/report.md`, appends it to
+/// `$GITHUB_STEP_SUMMARY` when set, and fails if any enforced budget is exceeded.
+fn perf(args: &[String]) -> Result<(), String> {
+    let mut runs = 3usize;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--runs" => {
+                runs = it
+                    .next()
+                    .ok_or("--runs needs a number")?
+                    .parse()
+                    .map_err(|e| format!("bad --runs value: {e}"))?;
+                if runs == 0 {
+                    return Err("--runs must be at least 1".into());
+                }
+            }
+            other => return Err(format!("unknown perf option `{other}`")),
+        }
+    }
+
+    let iso = build_image(true, "")?;
+    let kernel = target_dir()
+        .join(KERNEL_TARGET)
+        .join("release")
+        .join(KERNEL_PACKAGE);
+    let kernel_bytes =
+        fs::read(&kernel).map_err(|e| format!("reading {}: {e}", kernel.display()))?;
+    let sizes = elf64_load_sizes(&kernel_bytes)?;
+    let iso_bytes = fs::metadata(&iso)
+        .map_err(|e| format!("stat {}: {e}", iso.display()))?
+        .len();
+    let kvm = kvm_usable();
+
+    let mut boot_ms: Vec<u128> = Vec::new();
+    let mut work_ms: Vec<u128> = Vec::new();
+    for _ in 0..runs {
+        let opts = RunOpts {
+            release: true,
+            bios: false,
+            debug: false,
+            timeout: Some(BOOT_TO_BANNER_MAX * 4),
+            cmdline: String::new(),
+        };
+        let mut cmd = qemu_command(&iso, &opts)?;
+        let (out, timing) = boot_timing(
+            &mut cmd,
+            BOOT_TO_BANNER_MAX * 4,
+            "CarvOS chisel v",
+            "halting",
+        )?;
+        let Some(t) = timing else {
+            return Err(format!(
+                "perf: banner never appeared within {:?}; serial:\n{out}",
+                BOOT_TO_BANNER_MAX * 4
+            ));
+        };
+        boot_ms.push(t.banner_after.as_millis());
+        if let Some(w) = t.halt_after_banner {
+            work_ms.push(w.as_millis());
+        }
+    }
+    boot_ms.sort_unstable();
+    work_ms.sort_unstable();
+    let boot_med = boot_ms[boot_ms.len() / 2];
+    let work_med = work_ms.get(work_ms.len() / 2).copied();
+
+    let kib = |b: u64| format!("{:.1} KiB", b as f64 / 1024.0);
+    let accel = if kvm { "KVM" } else { "TCG, not enforced" };
+    // (metric, value, budget, within budget)
+    let rows: Vec<(String, String, String, bool)> = vec![
+        (
+            "kernel loaded size (release)".into(),
+            format!(
+                "{} (text {}, rodata {}, data {}, bss {})",
+                kib(sizes.total()),
+                kib(sizes.text),
+                kib(sizes.rodata),
+                kib(sizes.data),
+                kib(sizes.bss)
+            ),
+            format!("≤ {}", kib(KERNEL_LOAD_BYTES_MAX)),
+            sizes.total() <= KERNEL_LOAD_BYTES_MAX,
+        ),
+        (
+            "ISO size".into(),
+            format!("{:.2} MiB", iso_bytes as f64 / (1024.0 * 1024.0)),
+            format!("≤ {} MiB", ISO_BYTES_MAX >> 20),
+            iso_bytes <= ISO_BYTES_MAX,
+        ),
+        (
+            format!("boot to banner, median of {runs} ({accel})"),
+            format!("{boot_med} ms"),
+            format!("≤ {} ms", BOOT_TO_BANNER_MAX.as_millis()),
+            !kvm || boot_med <= BOOT_TO_BANNER_MAX.as_millis(),
+        ),
+        (
+            format!("banner to halt ({accel})"),
+            work_med
+                .map(|w| format!("{w} ms"))
+                .unwrap_or_else(|| "n/a".into()),
+            format!("≤ {} ms", BANNER_TO_HALT_MAX.as_millis()),
+            !kvm || work_med.is_none_or(|w| w <= BANNER_TO_HALT_MAX.as_millis()),
+        ),
+    ];
+
+    let mut md = String::from(
+        "### CarvOS performance check\n\n| Metric | Value | Budget | |\n|---|---|---|---|\n",
+    );
+    for (m, v, b, ok) in &rows {
+        let mark = if *ok { "✅" } else { "❌ over budget" };
+        md.push_str(&format!("| {m} | {v} | {b} | {mark} |\n"));
+    }
+    let dir = target_dir().join("perf");
+    fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    fs::write(dir.join("report.md"), &md).map_err(|e| format!("writing report: {e}"))?;
+    print!("{md}");
+    if let Ok(summary) = env::var("GITHUB_STEP_SUMMARY") {
+        use std::io::Write;
+        if let Ok(mut f) = fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(summary)
+        {
+            let _ = f.write_all(md.as_bytes());
+        }
+    }
+
+    let over: Vec<&str> = rows.iter().filter(|r| !r.3).map(|r| r.0.as_str()).collect();
+    if over.is_empty() {
+        println!("perf: all budgets met");
+        Ok(())
+    } else {
+        Err(format!("perf: over budget: {over:?}"))
+    }
+}
+
+/// Runs QEMU with the serial console captured and records when `banner` and then `halt`
+/// appear. Returns the serial text and the timing (None if the banner never appeared).
+fn boot_timing(
+    cmd: &mut Command,
+    timeout: Duration,
+    banner: &str,
+    halt: &str,
+) -> Result<(String, Option<BootTiming>), String> {
+    use std::io::Read;
+    use std::sync::mpsc;
+
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped());
+    let start = Instant::now();
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to start qemu-system-x86_64: {e}"))?;
+    let mut stdout = child.stdout.take().expect("stdout was requested as piped");
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match stdout.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    let mut out: Vec<u8> = Vec::new();
+    let mut banner_at: Option<Instant> = None;
+    let mut halt_at: Option<Instant> = None;
+    loop {
+        let remaining = timeout.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        match rx.recv_timeout(remaining.min(Duration::from_millis(100))) {
+            Ok(chunk) => {
+                out.extend_from_slice(&chunk);
+                let text = String::from_utf8_lossy(&out);
+                if banner_at.is_none() && text.contains(banner) {
+                    banner_at = Some(Instant::now());
+                }
+                if banner_at.is_some() && text.contains(halt) {
+                    halt_at = Some(Instant::now());
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let text = String::from_utf8_lossy(&out).into_owned();
+    let timing = banner_at.map(|b| BootTiming {
+        banner_after: b.duration_since(start),
+        halt_after_banner: halt_at.map(|h| h.duration_since(b)),
+    });
+    Ok((text, timing))
+}
+
 // ---------------------------------------------------------------- shared
 
 fn workspace_root() -> PathBuf {
@@ -901,6 +1192,28 @@ mod tests {
         assert!(conf.contains("serial: yes"));
         assert!(!conf.contains("cmdline:"));
         assert!(limine_conf("panic-test").contains("    cmdline: panic-test\n"));
+    }
+
+    #[test]
+    fn elf_load_sizes_by_permission() {
+        // Header + two program headers: RX text (memsz 0x1000) and RW data (filesz 0x100, memsz 0x300).
+        let mut h = header(HIGHER_HALF_BASE);
+        h[32..40].copy_from_slice(&64u64.to_le_bytes()); // e_phoff
+        h[54..56].copy_from_slice(&56u16.to_le_bytes()); // e_phentsize
+        h[56..58].copy_from_slice(&2u16.to_le_bytes()); // e_phnum
+        let ph = |ptype: u32, flags: u32, filesz: u64, memsz: u64| {
+            let mut p = vec![0u8; 56];
+            p[0..4].copy_from_slice(&ptype.to_le_bytes());
+            p[4..8].copy_from_slice(&flags.to_le_bytes());
+            p[32..40].copy_from_slice(&filesz.to_le_bytes());
+            p[40..48].copy_from_slice(&memsz.to_le_bytes());
+            p
+        };
+        h.extend(ph(1, 5, 0x1000, 0x1000));
+        h.extend(ph(1, 6, 0x100, 0x300));
+        let s = elf64_load_sizes(&h).unwrap();
+        assert_eq!((s.text, s.rodata, s.data, s.bss), (0x1000, 0, 0x100, 0x200));
+        assert_eq!(s.total(), 0x1300);
     }
 
     #[test]
