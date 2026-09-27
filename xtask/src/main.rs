@@ -735,6 +735,7 @@ fn run_smoke(release: bool, timeout: Duration, iso: Option<&Path>) -> Result<(),
     fs::create_dir_all(&log_dir).map_err(|e| format!("creating {}: {e}", log_dir.display()))?;
 
     let mut failures = Vec::new();
+    let mut skipped = 0usize;
     for sc in SMOKE_SCENARIOS {
         let iso = match iso {
             Some(p) if sc.cmdline.is_empty() => {
@@ -746,6 +747,7 @@ fn run_smoke(release: bool, timeout: Duration, iso: Option<&Path>) -> Result<(),
                     "smoke: {:<6} SKIP  (needs its own cmdline; not applicable to --iso)",
                     sc.name
                 );
+                skipped += 1;
                 continue;
             }
             None => build_image(release, sc.cmdline)?,
@@ -788,7 +790,12 @@ fn run_smoke(release: bool, timeout: Duration, iso: Option<&Path>) -> Result<(),
         }
     }
     if failures.is_empty() {
-        println!("smoke: all {} scenarios passed", SMOKE_SCENARIOS.len());
+        let ran = SMOKE_SCENARIOS.len() - skipped;
+        if skipped == 0 {
+            println!("smoke: all {ran} scenarios passed");
+        } else {
+            println!("smoke: {ran} scenarios passed, {skipped} skipped");
+        }
         Ok(())
     } else {
         Err(format!(
