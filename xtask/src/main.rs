@@ -375,11 +375,20 @@ fn assemble_iso(
     let epoch = source_date_epoch();
     let stamp = iso_timestamp(epoch);
     xorriso.env("SOURCE_DATE_EPOCH", epoch.to_string());
+    // Without -V/-A/-p, xorriso writes its own version string into the volume descriptors (the
+    // preparer field), which was the only difference (16 bytes) between a Fedora build and the
+    // GitHub runner's `v0.1.1-rc.1`.
     xorriso
         .args([
             "-as",
             "mkisofs",
             "-quiet",
+            "-V",
+            "CARVOS",
+            "-A",
+            "CarvOS",
+            "-p",
+            "cargo xtask image",
             "-R",
             "-r",
             "-J",

@@ -15,6 +15,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   `kernel heap exhausted` with the request and heap state and takes the panic path; the `oom` smoke scenario
   (`oom-test` on the cmdline) proves it.
 
+### Fixed
+- `cargo xtask image` pins the ISO's volume id (`CARVOS`), application id (`CarvOS`) and preparer id: without
+  them xorriso writes its own version string into the volume descriptors, the one remaining difference (16 bytes)
+  between a Fedora build and the runner's `v0.1.1-rc.1` image (kernel ELF and every file were already identical).
+
 ## [0.1.1] - 2026-09-27
 
 Phase 1 under way: the kernel now has a GDT/TSS/IDT with a handler for every exception, a physical
