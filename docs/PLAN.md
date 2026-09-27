@@ -631,7 +631,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | in progress | P0.1 done; P0.2 in review; P0.5/P0.7/P0.8 are the GitHub infra tasks (§7) |
+| P0 Scaffolding & Boot | in progress | P0.1–P0.2 done; P0.3 in review; P0.5/P0.7/P0.8 are the GitHub infra tasks (§7) |
 | P1 Kernel Core | not started | |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |
