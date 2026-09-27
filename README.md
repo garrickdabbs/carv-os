@@ -154,8 +154,9 @@ will boot Limine on a real machine, but nothing beyond the serial banner is exer
 
 **Releases** — [github.com/garrickdabbs/carv-os/releases](https://github.com/garrickdabbs/carv-os/releases).
 Each tagged release ships `carv-os-vX.Y.Z-x86_64.iso`, a compressed blank data disk, the unstripped
-`chisel-vX.Y.Z.elf` (for symbolising crash reports), `SHA256SUMS`, a CycloneDX SBOM, a Sigstore keyless
-signature of the checksums and a SLSA build provenance attestation. Verify before booting:
+`chisel-vX.Y.Z.elf` (for symbolising crash reports), `SHA256SUMS`, CycloneDX SBOMs, a Sigstore keyless
+signature of the checksums, and the SLSA build provenance both in GitHub's attestation store and as assets
+(`carv-os-vX.Y.Z.intoto.jsonl`, `carv-os-vX.Y.Z.provenance.sigstore.json`). Verify before booting:
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \

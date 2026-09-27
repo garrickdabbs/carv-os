@@ -6,6 +6,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Changed
+- Release and nightly workflows split into a read-only build job and a minimal-permission publish job; the SLSA
+  provenance is now also published as `carv-os-<tag>.intoto.jsonl` and `carv-os-<tag>.provenance.sigstore.json`
+  release assets (#35). Fuller `.gitignore`; `CONTRIBUTING.md` added (#34, #35).
+
 ### Added
 - P1.1: GDT with kernel code/data/TSS descriptors, a dedicated double-fault IST stack, and an IDT with a handler
   for every CPU exception (`#BP` resumes and is counted; `#DF` prints on its own stack and halts; everything

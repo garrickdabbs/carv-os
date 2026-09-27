@@ -464,9 +464,14 @@ protection, Scorecard and rulesets are all available at no cost.
      `SHA256SUMS`, SBOMs `carv-os-v0.y.z-<crate>.cdx.json`, one CycloneDX document per workspace
      crate (`cargo cyclonedx --describe crate`)
   5. **sign & attest:** Sigstore keyless signature of `SHA256SUMS` (`cosign sign-blob` via OIDC,
-     `.sigstore` bundle) and **SLSA build provenance** via `actions/attest-build-provenance` for
+     `.sigstore.json` bundle) and **SLSA build provenance** via `actions/attest-build-provenance` for
      every artifact, so `gh attestation verify carv-os-*.iso -R garrickdabbs/carv-os` proves it came
-     from this repo's workflow at that commit
+     from this repo's workflow at that commit. The provenance is *also* published as release assets —
+     `carv-os-vX.intoto.jsonl` (the DSSE envelope) and `carv-os-vX.provenance.sigstore.json` — for
+     offline verifiers and for OpenSSF Scorecard, which only looks at assets.
+     The workflow is split into a read-only `build` job (compilers, QEMU, third-party tools) and a
+     `publish` job that alone holds `contents/id-token/attestations: write`; `nightly.yml` is split the
+     same way.
   6. `gh release create` with generated notes, marked *pre-release* while `0.y.z`
 - **Verifying a download** (documented in README):
   `sha256sum -c SHA256SUMS`, `cosign verify-blob --bundle SHA256SUMS.sigstore ...`,

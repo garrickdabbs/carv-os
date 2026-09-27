@@ -1,7 +1,44 @@
+# Build output (cargo) and everything xtask writes under it: ISO trees, Limine downloads,
+# QEMU logs, serial logs, OVMF variable copies, perf and test reports.
 /target/
 **/target/
+
+# Images and disks produced anywhere (xtask writes them to target/, but keep stray copies out too)
 *.iso
 *.img
+*.img.zst
+*.qcow2
+
+# Logs and traces
+*.log
 qemu.log
+perf.data*
+
+# Release staging and generated notes
 /dist/
 notes.md
+SHA256SUMS
+*.sigstore.json
+*.intoto.jsonl
+*.cdx.json
+
+# Fuzzing (P9.3) and coverage
+/fuzz/artifacts/
+/fuzz/corpus/
+*.profraw
+*.profdata
+/coverage/
+
+# Editors, OS, tooling
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.direnv/
+.envrc

@@ -1,5 +1,6 @@
 # Nightly: the slow and drift-detecting jobs that are too noisy for PRs (docs/PLAN.md §7.4), plus a
 # rolling `nightly` pre-release so there is always a bootable image of the latest main.
+# Least privilege: everything that runs code uses a read-only token; only `publish` can write.
 
 name: Nightly
 
@@ -20,8 +21,6 @@ jobs:
     name: nightly
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    permissions:
-      contents: write # move the rolling `nightly` tag/release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,13 +68,37 @@ jobs:
           cargo +nightly clippy -p chisel --target x86_64-unknown-none --locked -- -D warnings
           echo "### toolchain drift: newest nightly ($(rustc +nightly --version)) builds the kernel ✅" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: publish rolling `nightly` pre-release
+      - name: hand the ISO to the publish job
+        run: |
+          mkdir -p nightly-dist
+          cp target/carv-os.iso nightly-dist/carv-os-nightly-x86_64.iso
+          (cd nightly-dist && sha256sum -- * > SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-dist
+          path: nightly-dist/
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: publish rolling nightly pre-release
+    needs: nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # move the rolling `nightly` tag/release
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nightly-dist
+          path: nightly-dist
+      - name: publish
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          cp target/carv-os.iso carv-os-nightly-x86_64.iso
-          sha256sum carv-os-nightly-x86_64.iso > SHA256SUMS
-          gh release delete nightly --cleanup-tag --yes 2>/dev/null || true
-          gh release create nightly carv-os-nightly-x86_64.iso SHA256SUMS --prerelease --latest=false \
+          set -euo pipefail
+          gh release delete nightly --repo "$REPO" --cleanup-tag --yes 2>/dev/null || true
+          gh release create nightly nightly-dist/* --repo "$REPO" --target "$GITHUB_SHA" --prerelease --latest=false \
             --title "nightly (main @ ${GITHUB_SHA::7})" \
             --notes "Rolling, unsigned build of \`main\` at ${GITHUB_SHA} on $(date -u +%Y-%m-%d). Not a release: for tagged, signed, attested images see the versioned releases."
