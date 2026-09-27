@@ -751,7 +751,10 @@ exist (P9.3), Miri/geiger/coverage/50-boot stress in nightly (P9.6).
 - **Reproducible ISO:** `SOURCE_DATE_EPOCH` alone is not enough for xorriso — pass
   `--modification-date=<stamp>00` and `--set_all_file_dates @<epoch>` *after* the `-as mkisofs`
   arguments, and overwrite the MBR disk id at offset `0x1B8` (`limine bios-install` seeds it from
-  `time()`).
+  `time()`). Also pass `-V`, `-A` and `-p`: xorriso otherwise stamps its own version
+  (`XORRISO-1.5.8 …, LIBISOBURN-…`) into the preparer field of the primary and Joliet volume
+  descriptors, so builds differ by xorriso version even when every file inside matches (found by
+  comparing Fedora's 1.5.8 with Ubuntu's 1.5.6 on `v0.1.1-rc.1`).
 - **GitHub Actions:** `id-token` accepts only `write` (or absent), never `read`; job `permissions`
   blocks that run compilers stay `contents: read`. Plain-scalar colons in `if:`/`name:` break YAML,
   so quote them and validate with PyYAML. `dtolnay/rust-toolchain` needs an explicit toolchain input;
