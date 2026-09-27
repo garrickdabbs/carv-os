@@ -77,7 +77,7 @@ Everything goes through `cargo xtask` (a small Rust program in [`xtask/`](xtask/
 | Command | What it does |
 |---|---|
 | `cargo xtask build [--release]` | Build the `chisel` kernel for `x86_64-unknown-none` and verify it is linked in the higher half. |
-| `cargo xtask image [--release]` | Build a bootable ISO (`target/carv-os.iso`, UEFI + BIOS) and a blank 64 MiB virtio disk (`target/data.img`). |
+| `cargo xtask image [--release]` | Build a bootable ISO (`target/carv-os.iso`, UEFI + BIOS) and a blank 64 MiB virtio disk (`target/data.img`). `--release` strips debuginfo from the kernel inside the ISO; the unstripped ELF stays in `target/`. |
 | `cargo xtask limine` | Fetch and verify the pinned Limine bootloader files (done automatically by `image`). |
 | `cargo xtask run [flags]` | Build the image and boot it in QEMU with the serial console on your terminal. `--iso PATH` boots an existing image (e.g. a release) instead. |
 | `cargo xtask test [--host] [--kernel] [--integration] [--release] [--timeout SECS]` | **The one command every PR must pass**: host unit tests, the in-kernel test binary booted in QEMU, and the boot smoke scenarios. No selector runs all three. |
@@ -164,8 +164,10 @@ cosign verify-blob --bundle SHA256SUMS.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 gh attestation verify carv-os-vX.Y.Z-x86_64.iso -R garrickdabbs/carv-os
 ```
-The ISO is reproducible: building the tagged commit yourself (`SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-cargo xtask image --release`) yields the same bytes the release workflow verified by building twice.
+The ISO is reproducible on any machine: building the tagged commit yourself (`SOURCE_DATE_EPOCH=$(git log -1
+--format=%ct) cargo xtask image --release`) yields the same bytes the release workflow verified by building
+twice from different directories (the release profile uses cargo's `trim-paths`, and the ISO's kernel is
+debuginfo-stripped).
 A rolling, unsigned `nightly` pre-release tracks `main`. All `0.y.z` releases are marked pre-release.
 
 ## Repository layout

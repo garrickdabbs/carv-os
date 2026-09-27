@@ -21,7 +21,8 @@
 //!
 //! `run` and `smoke` accept `--iso PATH` to boot an existing image (e.g. a release artifact)
 //! instead of building one. ISO assembly honours `SOURCE_DATE_EPOCH` (defaulting to the commit
-//! time) so two builds of the same commit produce byte-identical images.
+//! time) and `--release` images carry a debuginfo-stripped kernel; together with the release
+//! profile's `trim-paths` this makes two builds of the same commit byte-identical on any machine.
 
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(missing_docs)]
@@ -300,7 +301,7 @@ fn image(args: &[String]) -> Result<PathBuf, String> {
 
 fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
     let kernel = build_kernel(release)?;
-    let iso = assemble_iso(&kernel, cmdline, &target_dir(), ISO_NAME)?;
+    let iso = assemble_iso(&kernel, cmdline, &target_dir(), ISO_NAME, release)?;
     ensure_data_disk()?;
     println!("image: {}", iso.display());
     Ok(iso)
@@ -325,11 +326,14 @@ fn ensure_data_disk() -> Result<PathBuf, String> {
 
 /// Assembles a bootable ISO around `kernel` (any ELF built for the kernel target — the normal
 /// kernel or a test kernel) in `out_dir/iso_root`, writing `out_dir/iso_name`.
+/// Release images get a debuginfo-stripped copy of the kernel (#29); the unstripped ELF stays in
+/// `target/` and ships separately as `chisel-vX.Y.Z.elf`.
 fn assemble_iso(
     kernel: &Path,
     cmdline: &str,
     out_dir: &Path,
     iso_name: &str,
+    release: bool,
 ) -> Result<PathBuf, String> {
     let limine = ensure_limine()?;
 
@@ -344,7 +348,14 @@ fn assemble_iso(
         fs::create_dir_all(d).map_err(|e| format!("creating {}: {e}", d.display()))?;
     }
 
-    copy(kernel, &boot.join(KERNEL_PACKAGE))?;
+    let kernel_iso = boot.join(KERNEL_PACKAGE);
+    copy(kernel, &kernel_iso)?;
+    if release {
+        // Smaller image, and immune to any DWARF detail that could still differ between machines.
+        let mut objcopy = Command::new(llvm_objcopy()?);
+        objcopy.arg("--strip-debug").arg(&kernel_iso);
+        run_tool(&mut objcopy, "llvm-objcopy --strip-debug")?;
+    }
     fs::write(boot_limine.join("limine.conf"), limine_conf(cmdline))
         .map_err(|e| format!("writing limine.conf: {e}"))?;
     for name in [
@@ -491,6 +502,40 @@ fn limine_conf(cmdline: &str) -> String {
         conf.push_str(&format!("    cmdline: {cmdline}\n"));
     }
     conf
+}
+
+/// The toolchain's own `llvm-objcopy` (component `llvm-tools-preview`, pinned in
+/// `rust-toolchain.toml`), so stripping never depends on a system binutils.
+fn llvm_objcopy() -> Result<PathBuf, String> {
+    let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
+    let print = |args: &[&str]| -> Result<String, String> {
+        let out = Command::new(&rustc)
+            .args(args)
+            .output()
+            .map_err(|e| format!("failed to run rustc: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("rustc {} failed", args.join(" ")));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    let sysroot = print(&["--print", "sysroot"])?;
+    let host = print(&["-vV"])?
+        .lines()
+        .find_map(|l| l.strip_prefix("host: "))
+        .ok_or("rustc -vV did not report a host triple")?
+        .to_string();
+    let path = Path::new(&sysroot)
+        .join("lib/rustlib")
+        .join(host)
+        .join("bin/llvm-objcopy");
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "{} not found: is the llvm-tools-preview component installed? (rust-toolchain.toml lists it)",
+            path.display()
+        ))
+    }
 }
 
 fn copy(from: &Path, to: &Path) -> Result<(), String> {
@@ -1523,7 +1568,7 @@ fn kernel_tests(opts: &TestOpts) -> Result<String, String> {
     let exe = kernel_test_executable(opts.release)?;
     let out_dir = target_dir().join("test");
     fs::create_dir_all(&out_dir).map_err(|e| format!("creating {}: {e}", out_dir.display()))?;
-    let iso = assemble_iso(&exe, "", &out_dir, "carv-os-test.iso")?;
+    let iso = assemble_iso(&exe, "", &out_dir, "carv-os-test.iso", opts.release)?;
     let run_opts = RunOpts {
         release: opts.release,
         bios: false,

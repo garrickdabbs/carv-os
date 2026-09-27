@@ -5,7 +5,7 @@ Read it before starting any task.
 
 ## Commands
 - `cargo xtask build` — build kernel, services, userland
-- `cargo xtask image [--release]` — build `target/carv-os.iso` (UEFI + BIOS) and `target/data.img`
+- `cargo xtask image [--release]` — build `target/carv-os.iso` (UEFI + BIOS) and `target/data.img`; `--release` strips debuginfo from the ISO's kernel copy (reproducible builds, #29)
 - `cargo xtask run [--release] [--bios] [--debug] [--timeout SECS]` — boot in QEMU (serial on stdio); `--debug` logs int/reset to `target/qemu.log`; always pass `--timeout` in scripts
 - `cargo xtask smoke [--release] [--timeout SECS]` — boot UEFI, BIOS and panic scenarios in QEMU and check serial output; logs in `target/smoke/`
 - `cargo xtask docs-gate [--base REF]` — fail (exit 2) if code changed without documentation; runs in CI and as the Stop hook in `.claude/settings.json`

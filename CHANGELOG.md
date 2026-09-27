@@ -24,6 +24,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - Release and nightly workflows split into a read-only build job and a minimal-permission publish job; the SLSA
   provenance is now also published as `carv-os-<tag>.intoto.jsonl` and `carv-os-<tag>.provenance.sigstore.json`
   release assets (#35). Fuller `.gitignore`; `CONTRIBUTING.md` added (#34, #35).
+- Reproducible builds across machines (#29): the release profile enables cargo's `trim-paths = "all"`, so no
+  checkout, registry or sysroot path reaches the kernel ELF, and `cargo xtask image --release` strips debuginfo
+  from the ISO's kernel copy with the toolchain's `llvm-objcopy`. The release workflow's second pass now builds
+  from a different directory with a fresh `CARGO_HOME` and requires identical ISO and kernel hashes.
+- Release workflow: the build job declares its read-only `contents: read` token explicitly (#35).
 
 ### Added
 - P1.3: paging — `kernel::mm::paging` adopts Limine's page tables through the HHDM (`OffsetPageTable`) with
