@@ -351,7 +351,7 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
   count delta); issue templates for *task*, *bug (with serial log)*, and *ADR proposal*.
 - **Labels & board:** `phase:P0`…`phase:P10`, `area:kernel|services|userland|crates|infra`,
   `kind:task|bug|adr|security`. One GitHub Issue per task ID, mirrored on a Project board with
-  columns *Backlog → In progress → In review → Done*. The §11 status table summarizes the board.
+  columns *Backlog → Ready → In progress → In review → Done*. The §11 status table summarizes the board.
 - **Board mechanics (set up 2026-09-27):** the *CarvOS Prototype* user project (#3) with Status
   *Backlog / Ready / In progress / In review / Done*, 14-day iterations (Iteration 1 from 2026-09-26;
   Phase N's tasks sit in Iteration N) and Priority/Size fields. Phase epics #46 (P1), #55 (P2) and
