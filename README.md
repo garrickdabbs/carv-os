@@ -62,7 +62,7 @@ cargo xtask run
 ```
 You should see the Limine menu, then:
 ```
-CarvOS chisel v0.0.1 booting
+CarvOS chisel v0.1.0 booting
   bootloader: Limine 11.4.1 (base revision 6)
   hhdm offset: 0xffff800000000000
   memory map: 31 entries, 466 MiB usable
@@ -79,9 +79,10 @@ Everything goes through `cargo xtask` (a small Rust program in [`xtask/`](xtask/
 | `cargo xtask build [--release]` | Build the `chisel` kernel for `x86_64-unknown-none` and verify it is linked in the higher half. |
 | `cargo xtask image [--release]` | Build a bootable ISO (`target/carv-os.iso`, UEFI + BIOS) and a blank 64 MiB virtio disk (`target/data.img`). |
 | `cargo xtask limine` | Fetch and verify the pinned Limine bootloader files (done automatically by `image`). |
-| `cargo xtask run [flags]` | Build the image and boot it in QEMU with the serial console on your terminal. |
+| `cargo xtask run [flags]` | Build the image and boot it in QEMU with the serial console on your terminal. `--iso PATH` boots an existing image (e.g. a release) instead. |
 | `cargo xtask test [--host] [--kernel] [--integration] [--release] [--timeout SECS]` | **The one command every PR must pass**: host unit tests, the in-kernel test binary booted in QEMU, and the boot smoke scenarios. No selector runs all three. |
-| `cargo xtask smoke [--release] [--timeout SECS]` | Boot the image under UEFI, BIOS, and with a deliberate panic, and check the serial output (also part of `test`). |
+| `cargo xtask smoke [--release] [--timeout SECS] [--iso PATH]` | Boot the image under UEFI, BIOS, and with a deliberate panic, and check the serial output (also part of `test`). With `--iso`, boots that image and skips the panic scenario. |
+| `cargo xtask release-check [--tag vX.Y.Z]` | Gate used by the release workflow: tag ↔ `[workspace.package] version` ↔ `CHANGELOG.md` section. |
 | `cargo xtask docs-gate [--base REF]` | Fail if code changed without matching documentation changes (see [Contributing](#contributing)). |
 | `cargo xtask perf [--runs N]` | Measure release-kernel and ISO size and boot timings (median of N boots) against budgets; report in `target/perf/report.md`. |
 | `cargo xtask help` | List commands. |
@@ -151,9 +152,20 @@ to the serial port. Only virtio block and network devices will be supported when
 **Real hardware** — not supported. The ISO is a hybrid image so `dd if=target/carv-os.iso of=/dev/sdX`
 will boot Limine on a real machine, but nothing beyond the serial banner is exercised there.
 
-**Releases** — none yet. When they exist (see [`docs/PLAN.md` §7.5](docs/PLAN.md#75-releases--githubworkflowsreleaseyml)),
-each will ship `carv-os-vX.Y.Z-x86_64.iso`, `SHA256SUMS`, an SBOM, a Sigstore signature and a build
-provenance attestation, verifiable with `sha256sum -c` and `gh attestation verify`.
+**Releases** — [github.com/garrickdabbs/carv-os/releases](https://github.com/garrickdabbs/carv-os/releases).
+Each tagged release ships `carv-os-vX.Y.Z-x86_64.iso`, a compressed blank data disk, the unstripped
+`chisel-vX.Y.Z.elf` (for symbolising crash reports), `SHA256SUMS`, a CycloneDX SBOM, a Sigstore keyless
+signature of the checksums and a SLSA build provenance attestation. Verify before booting:
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/garrickdabbs/carv-os/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+gh attestation verify carv-os-vX.Y.Z-x86_64.iso -R garrickdabbs/carv-os
+```
+The ISO is reproducible: building the tagged commit yourself (`SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+cargo xtask image --release`) yields the same bytes the release workflow verified by building twice.
+A rolling, unsigned `nightly` pre-release tracks `main`. All `0.y.z` releases are marked pre-release.
 
 ## Repository layout
 

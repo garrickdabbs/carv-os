@@ -1,0 +1,80 @@
+# Nightly: the slow and drift-detecting jobs that are too noisy for PRs (docs/PLAN.md §7.4), plus a
+# rolling `nightly` pre-release so there is always a bootable image of the latest main.
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  nightly:
+    name: nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # move the rolling `nightly` tag/release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: install the pinned toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: install QEMU, OVMF, xorriso
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf xorriso
+      - name: enable KVM for the runner user
+        continue-on-error: true
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: full test suite (release profile)
+        run: cargo xtask test --release --timeout 120
+      - name: stress — 10 consecutive UEFI boots must all reach the banner
+        run: |
+          set -e
+          cargo xtask image --release
+          for i in $(seq 1 10); do
+            cargo xtask smoke --release --timeout 60 --iso target/carv-os.iso | grep -q "smoke: uefi   PASS" || { echo "::error::boot $i failed"; exit 1; }
+          done
+          echo "10/10 boots reached the banner"
+      - name: performance budgets (10-run median)
+        run: cargo xtask perf --runs 10
+
+      - name: install cargo-audit
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-audit
+      - name: cargo-audit (fresh RustSec database)
+        run: cargo audit --deny warnings
+
+      - name: toolchain drift — does the kernel still build on the newest nightly? (informational)
+        continue-on-error: true
+        run: |
+          rustup toolchain install nightly --profile minimal -c rust-src,clippy -t x86_64-unknown-none
+          cargo +nightly build -p chisel --target x86_64-unknown-none --locked
+          cargo +nightly clippy -p chisel --target x86_64-unknown-none --locked -- -D warnings
+          echo "### toolchain drift: newest nightly ($(rustc +nightly --version)) builds the kernel ✅" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: publish rolling `nightly` pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp target/carv-os.iso carv-os-nightly-x86_64.iso
+          sha256sum carv-os-nightly-x86_64.iso > SHA256SUMS
+          gh release delete nightly --cleanup-tag --yes 2>/dev/null || true
+          gh release create nightly carv-os-nightly-x86_64.iso SHA256SUMS --prerelease --latest=false \
+            --title "nightly (main @ ${GITHUB_SHA::7})" \
+            --notes "Rolling, unsigned build of \`main\` at ${GITHUB_SHA} on $(date -u +%Y-%m-%d). Not a release: for tagged, signed, attested images see the versioned releases."

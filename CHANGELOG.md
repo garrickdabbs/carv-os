@@ -6,6 +6,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-27
+
+Phase 0 complete: CarvOS boots under Limine on UEFI and BIOS, brings up a serial console, runs its
+in-kernel tests, and ships through a reproducible, signed, attested release pipeline.
+
 ### Added
 - P0.1: Cargo workspace, pinned nightly toolchain, higher-half `chisel` kernel link, `cargo xtask build`.
 - P0.2: Limine boot (v11.4.1, every file SHA-256 pinned), `cargo xtask image` (UEFI + BIOS bootable ISO
@@ -36,3 +41,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   lists every required command including `cargo xtask test` and `cargo audit` (#19).
 - xtask: captured tool stdout/stderr are trimmed consistently before being joined, so error output never has a
   blank line between them (#22).
+- P0.8: release pipeline — `release.yml` (tag `v*` → `release-check`, reproducible ISO built twice and
+  compared, full test suite, boot of the exact release ISO, `SHA256SUMS`, CycloneDX SBOM, Sigstore keyless
+  signature, SLSA build provenance, GitHub pre-release with generated notes), `nightly.yml` (daily full tests,
+  10-boot stress, 10-run perf, `cargo audit`, newest-nightly toolchain drift, rolling `nightly` pre-release),
+  `cargo xtask release-check`, `run`/`smoke --iso PATH`, `SOURCE_DATE_EPOCH`-pinned ISO timestamps.

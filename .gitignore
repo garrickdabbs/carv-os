@@ -3,3 +3,5 @@
 *.iso
 *.img
 qemu.log
+/dist/
+notes.md
