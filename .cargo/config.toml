@@ -8,4 +8,7 @@ rustflags = [
     "-C", "code-model=kernel",
     # Keep frame pointers so panics can walk the stack later.
     "-C", "force-frame-pointers=yes",
+    # Remap absolute source paths to relative paths for reproducible builds (#29).
+    "-C", "remap-path-prefix=/home/runner/work/carv-os/carv-os=/carv-os",
+    "-C", "remap-path-prefix=/root/.cargo=/carv-os/.cargo",
 ]

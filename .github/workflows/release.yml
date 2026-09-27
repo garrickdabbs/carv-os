@@ -31,6 +31,9 @@ jobs:
     name: build release artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read # build job has read-only access
+      id-token: read # for Rust caches
     outputs:
       prerelease: ${{ steps.check.outputs.prerelease }}
       version: ${{ steps.check.outputs.version }}

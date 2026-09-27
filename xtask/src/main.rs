@@ -298,7 +298,7 @@ fn image(args: &[String]) -> Result<PathBuf, String> {
 
 fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
     let kernel = build_kernel(release)?;
-    let iso = assemble_iso(&kernel, cmdline, &target_dir(), ISO_NAME)?;
+    let iso = assemble_iso(&kernel, cmdline, &target_dir(), ISO_NAME, release)?;
     ensure_data_disk()?;
     println!("image: {}", iso.display());
     Ok(iso)
@@ -323,11 +323,13 @@ fn ensure_data_disk() -> Result<PathBuf, String> {
 
 /// Assembles a bootable ISO around `kernel` (any ELF built for the kernel target — the normal
 /// kernel or a test kernel) in `out_dir/iso_root`, writing `out_dir/iso_name`.
+/// For release builds, strips debuginfo from the kernel for reproducibility (#29).
 fn assemble_iso(
     kernel: &Path,
     cmdline: &str,
     out_dir: &Path,
     iso_name: &str,
+    release: bool,
 ) -> Result<PathBuf, String> {
     let limine = ensure_limine()?;
 
@@ -342,7 +344,14 @@ fn assemble_iso(
         fs::create_dir_all(d).map_err(|e| format!("creating {}: {e}", d.display()))?;
     }
 
-    copy(kernel, &boot.join(KERNEL_PACKAGE))?;
+    let kernel_iso = boot.join(KERNEL_PACKAGE);
+    copy(kernel, &kernel_iso)?;
+    // Strip debuginfo from release builds for reproducibility (#29).
+    if release {
+        let mut objcopy = Command::new("objcopy");
+        objcopy.args(["--strip-debug", &kernel_iso.display().to_string()]);
+        run_tool(&mut objcopy, "objcopy")?;
+    }
     fs::write(boot_limine.join("limine.conf"), limine_conf(cmdline))
         .map_err(|e| format!("writing limine.conf: {e}"))?;
     for name in [
@@ -1382,7 +1391,7 @@ fn kernel_tests(opts: &TestOpts) -> Result<String, String> {
     let exe = kernel_test_executable(opts.release)?;
     let out_dir = target_dir().join("test");
     fs::create_dir_all(&out_dir).map_err(|e| format!("creating {}: {e}", out_dir.display()))?;
-    let iso = assemble_iso(&exe, "", &out_dir, "carv-os-test.iso")?;
+    let iso = assemble_iso(&exe, "", &out_dir, "carv-os-test.iso", opts.release)?;
     let run_opts = RunOpts {
         release: opts.release,
         bios: false,
