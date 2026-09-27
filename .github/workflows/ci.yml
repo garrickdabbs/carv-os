@@ -97,7 +97,8 @@ jobs:
 
   docs-gate:
     name: docs gate
-    if: "github.event_name == 'pull_request' && !contains(github.event.pull_request.body, 'docs-gate: skip')"
+    # Dependabot PRs are their own changelog (title + release notes); people and agents are not exempt.
+    if: "github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && !contains(github.event.pull_request.body, 'docs-gate: skip')"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
