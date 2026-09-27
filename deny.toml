@@ -36,7 +36,7 @@ unused-allowed-license = "allow"
 exceptions = []
 
 [bans]
-multiple-versions = "warn"
+multiple-versions = "deny"
 wildcards = "deny"
 # Workspace crates depend on each other by path without a version; that is not a wildcard risk.
 allow-wildcard-paths = true

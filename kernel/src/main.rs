@@ -149,7 +149,7 @@ extern "C" fn kmain() -> ! {
             layout.free_frames * carv_frames::FRAME_SIZE / (1024 * 1024),
             layout.bitmap_bytes / 1024,
             layout.bitmap_phys.as_u64(),
-            probe.0.as_u64()
+            probe.start().as_u64()
         );
     }
 
@@ -201,8 +201,14 @@ fn force_page_fault() -> ! {
     let addr = VirtAddr::new(mm::paging::KERNEL_DYNAMIC_BASE + 0x10_0000);
     let page = Page::containing_address(addr);
     let frame = mm::frame::allocate().expect("frame");
-    mm::paging::map(page, frame, mm::paging::KERNEL_DATA).expect("map");
-    let unmapped = mm::paging::unmap(page).expect("unmap");
+    if let Err((e, f)) = mm::paging::map(page, frame, mm::paging::KERNEL_DATA) {
+        mm::frame::free(f);
+        panic!("map: {e}");
+    }
+    let unmapped = match mm::paging::unmap(page) {
+        Ok(f) => f,
+        Err(e) => panic!("unmap: {e}"),
+    };
     mm::frame::free(unmapped);
     assert_eq!(
         mm::paging::translate(addr),

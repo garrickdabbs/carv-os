@@ -10,7 +10,8 @@
 //!
 //! - `smoke [--release] [--timeout SECS]`: boot UEFI, BIOS and panic-test scenarios in QEMU and check
 //!   the serial output (CI's boot gate until `test` arrives in P0.4).
-//! - `docs-gate [--base REF]`: fail when code changed without matching documentation changes.
+//! - `docs-gate [--base REF] [--repo PATH]`: fail when code changed without matching documentation
+//!   changes (content-checked CHANGELOG growth, new-ADR rule, reasoned skip marker).
 //! - `perf [--runs N]`: measure kernel/ISO size and boot-to-banner time against budgets.
 //! - `test [--host] [--kernel] [--integration] [--release] [--timeout SECS]`: the one command every
 //!   PR must pass — host unit tests, the in-kernel test binary under QEMU (`isa-debug-exit`), and
@@ -897,42 +898,71 @@ fn run_qemu_capture(
 
 // ---------------------------------------------------------------- docs-gate
 
-/// Paths whose change means "code changed" for the documentation gate.
-const CODE_PREFIXES: &[&str] = &["kernel/", "crates/", "services/", "userland/", "xtask/"];
-
 /// Exit status when the gate finds violations (Claude Code treats hook exit 2 as "block").
 const EXIT_DOCS_GATE: i32 = 2;
 
-/// Compares the working tree against the merge-base with `--base` (default `main`) and fails if
-/// code changed without the documentation that must travel with it. Runs in CI on every PR and
-/// as a Claude Code stop hook (`.claude/settings.json`).
+/// Compares a checkout against the merge-base with `--base` (default `main`) and fails if code
+/// changed without the documentation that must travel with it. Runs in CI on every PR (from the
+/// *base branch's* copy of this tool, so a PR cannot weaken the gate it is judged by) and as a
+/// Claude Code stop hook (`.claude/settings.json`).
+///
+/// Options: `--base REF`, `--repo PATH` (checkout to inspect; default: this workspace).
+/// The PR body may be supplied in `DOCS_GATE_PR_BODY`; a line `docs-gate: skip — <reason>` with a
+/// reason of at least 20 characters skips the gate, and a bare marker is itself a violation.
 fn docs_gate(args: &[String]) -> Result<(), String> {
     let mut base = String::from("main");
+    let mut repo = workspace_root();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--base" => base = it.next().ok_or("--base needs a git ref")?.clone(),
+            "--repo" => repo = PathBuf::from(it.next().ok_or("--repo needs a path")?),
             other => return Err(format!("unknown docs-gate option `{other}`")),
         }
     }
 
-    let root = workspace_root();
-    let merge_base = git(&root, &["merge-base", &base, "HEAD"])?;
+    if let Ok(body) = env::var("DOCS_GATE_PR_BODY") {
+        match skip_reason(&body) {
+            Ok(Some(reason)) => {
+                println!("docs-gate: skipped by PR body — {reason}");
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(msg) => {
+                eprintln!("docs-gate: {msg}");
+                std::process::exit(EXIT_DOCS_GATE);
+            }
+        }
+    }
+
+    let merge_base = git(&repo, &["merge-base", &base, "HEAD"])?;
     let merge_base = merge_base.trim();
-    // Committed and uncommitted changes since the merge-base, plus untracked files.
-    let mut changed: Vec<String> = git(&root, &["diff", "--name-only", merge_base])?
+    // Committed and uncommitted changes since the merge-base (with status), plus untracked files.
+    let mut changed: Vec<Change> = git(&repo, &["diff", "--name-status", merge_base])?
         .lines()
-        .map(str::to_string)
+        .filter_map(Change::parse)
         .collect();
     changed.extend(
-        git(&root, &["ls-files", "--others", "--exclude-standard"])?
+        git(&repo, &["ls-files", "--others", "--exclude-standard"])?
             .lines()
-            .map(str::to_string),
+            .map(|p| Change {
+                status: 'A',
+                path: p.to_string(),
+            }),
     );
-    changed.sort();
-    changed.dedup();
+    changed.sort_by(|a, b| a.path.cmp(&b.path));
+    changed.dedup_by(|a, b| a.path == b.path);
 
-    let violations = docs_gate_violations(&changed);
+    // The changelog rule inspects content, not just paths: something must have been added under
+    // the Unreleased heading.
+    let changelog_grew = {
+        let before =
+            git(&repo, &["show", &format!("{merge_base}:CHANGELOG.md")]).unwrap_or_default();
+        let after = fs::read_to_string(repo.join("CHANGELOG.md")).unwrap_or_default();
+        unreleased_grew(&before, &after)
+    };
+
+    let violations = docs_gate_violations(&changed, changelog_grew);
     if violations.is_empty() {
         println!(
             "docs-gate: OK ({} changed file(s) since merge-base with {base})",
@@ -944,30 +974,117 @@ fn docs_gate(args: &[String]) -> Result<(), String> {
         eprintln!("docs-gate: {v}");
     }
     eprintln!(
-        "docs-gate: documentation must travel with code. Add the missing docs; if a change truly needs none, put `docs-gate: skip` and the reason in the PR body."
+        "docs-gate: documentation must travel with code. Add the missing docs; if a change truly needs none, put `docs-gate: skip — <reason>` in the PR body."
     );
     std::process::exit(EXIT_DOCS_GATE);
 }
 
+/// One changed path with its git status letter (`A`dded, `M`odified, `D`eleted, `R`enamed…).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Change {
+    status: char,
+    path: String,
+}
+
+impl Change {
+    /// Parses one `git diff --name-status` line (renames report the new path).
+    fn parse(line: &str) -> Option<Self> {
+        let mut parts = line.split('\t');
+        let status = parts.next()?.chars().next()?;
+        let path = parts.next_back()?.to_string();
+        Some(Change { status, path })
+    }
+
+    #[cfg(test)]
+    fn m(path: &str) -> Self {
+        Change {
+            status: 'M',
+            path: path.to_string(),
+        }
+    }
+}
+
+/// Finds a `docs-gate: skip` directive in a PR body. `Ok(Some(reason))` when a reason of at least
+/// 20 characters follows the marker (after `—`, `-` or `:`), `Err` when the marker appears without
+/// one, `Ok(None)` when absent.
+fn skip_reason(body: &str) -> Result<Option<String>, String> {
+    const MARKER: &str = "docs-gate: skip";
+    let Some(pos) = body.find(MARKER) else {
+        return Ok(None);
+    };
+    let rest = body[pos + MARKER.len()..]
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim_start_matches([' ', '—', '-', ':', '–'])
+        .trim();
+    if rest.chars().count() >= 20 {
+        Ok(Some(rest.to_string()))
+    } else {
+        Err(format!(
+            "`{MARKER}` found without a reason (need at least 20 characters after the marker on the same line)"
+        ))
+    }
+}
+
+/// Text of the `## [Unreleased]` section: from that heading up to the next `## [` heading.
+fn unreleased_section(changelog: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    for line in changelog.lines() {
+        if line.starts_with("## [") {
+            if inside {
+                break;
+            }
+            inside = line.starts_with("## [Unreleased]");
+            continue;
+        }
+        if inside {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Whether `after`'s Unreleased section contains at least one non-empty line absent from `before`'s.
+fn unreleased_grew(before: &str, after: &str) -> bool {
+    let old_text = unreleased_section(before);
+    let old: Vec<&str> = old_text.lines().map(str::trim).collect();
+    let new_text = unreleased_section(after);
+    new_text
+        .lines()
+        .map(str::trim)
+        .any(|l| !l.is_empty() && !l.starts_with("###") && !old.contains(&l))
+}
+
+/// Paths whose change means "code changed" for the documentation gate.
+const CODE_PREFIXES: &[&str] = &["kernel/", "crates/", "services/", "userland/", "xtask/"];
+
 /// The gate's rules, kept pure so they are unit-testable. Returns one message per violation.
-fn docs_gate_violations(changed: &[String]) -> Vec<String> {
-    let has = |p: &str| changed.iter().any(|c| c == p);
+fn docs_gate_violations(changed: &[Change], changelog_grew: bool) -> Vec<String> {
+    let has = |p: &str| changed.iter().any(|c| c.path == p);
     let any_under = |prefixes: &[&str]| {
         changed
             .iter()
-            .any(|c| prefixes.iter().any(|p| c.starts_with(p)))
+            .any(|c| prefixes.iter().any(|p| c.path.starts_with(p)))
+    };
+    let added_under = |prefix: &str| {
+        changed
+            .iter()
+            .any(|c| c.status == 'A' && c.path.starts_with(prefix))
     };
     let mut v = Vec::new();
 
-    if (any_under(CODE_PREFIXES) || has("Cargo.toml")) && !has("CHANGELOG.md") {
+    if (any_under(CODE_PREFIXES) || has("Cargo.toml")) && !changelog_grew {
         v.push(
-            "code changed (kernel/, crates/, services/, userland/, xtask/ or Cargo.toml) but CHANGELOG.md was not updated; add a line under Unreleased".to_string(),
+            "code changed (kernel/, crates/, services/, userland/, xtask/ or Cargo.toml) but nothing was added under `## [Unreleased]` in CHANGELOG.md".to_string(),
         );
     }
     if any_under(&["xtask/src/"]) && !(has("README.md") || has("CLAUDE.md") || has("docs/PLAN.md"))
     {
         v.push(
-            "xtask/src/ changed but README.md, CLAUDE.md and docs/PLAN.md were not; the command reference must match the tool".to_string(),
+            "xtask/src/ changed but none of README.md, CLAUDE.md or docs/PLAN.md changed; at least one must describe the new behaviour".to_string(),
         );
     }
     if any_under(&[".github/workflows/"]) && !(has("docs/PLAN.md") || has("README.md")) {
@@ -975,8 +1092,8 @@ fn docs_gate_violations(changed: &[String]) -> Vec<String> {
             ".github/workflows/ changed but neither docs/PLAN.md (section 7) nor README.md was updated".to_string(),
         );
     }
-    if has("docs/abi.md") && !any_under(&["docs/adr/"]) {
-        v.push("docs/abi.md changed without a new ADR in docs/adr/".to_string());
+    if has("docs/abi.md") && !added_under("docs/adr/") {
+        v.push("docs/abi.md changed without a *new* ADR file under docs/adr/ (editing an old one does not count)".to_string());
     }
     v
 }
@@ -1589,14 +1706,7 @@ fn release_check(args: &[String]) -> Result<(), String> {
     // The workflow decides --prerelease from this output, so failing to write it is an error,
     // not a warning (#26).
     if let Ok(path) = env::var("GITHUB_OUTPUT") {
-        use std::io::Write;
-        let mut f = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&path)
-            .map_err(|e| format!("opening GITHUB_OUTPUT ({path}): {e}"))?;
-        f.write_all(out.as_bytes())
-            .map_err(|e| format!("writing GITHUB_OUTPUT ({path}): {e}"))?;
+        append_github_output(Path::new(&path), &out)?;
     }
     println!("release-check: OK ({tag} ↔ {version}, changelog section present)");
     Ok(())
@@ -1638,6 +1748,30 @@ fn check_release(tag: &str, version: &str, changelog: &str) -> Result<ReleaseInf
     Ok(ReleaseInfo { prerelease })
 }
 
+/// Removes one matching pair of basic (`"`) or literal (`'`) string delimiters, nothing more, so
+/// a quote character inside the value survives.
+fn strip_toml_quotes(v: &str) -> &str {
+    for q in ['"', '\''] {
+        if v.len() >= 2 && v.starts_with(q) && v.ends_with(q) {
+            return &v[1..v.len() - 1];
+        }
+    }
+    v
+}
+
+/// Appends `text` to the `GITHUB_OUTPUT` file at `path`, failing loudly: the release workflow
+/// decides `--prerelease` from this output, so a silent write failure must not pass (#26).
+fn append_github_output(path: &Path, text: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut f = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .map_err(|e| format!("opening GITHUB_OUTPUT ({}): {e}", path.display()))?;
+    f.write_all(text.as_bytes())
+        .map_err(|e| format!("writing GITHUB_OUTPUT ({}): {e}", path.display()))
+}
+
 /// Extracts `version = "..."` from the `[workspace.package]` table of a Cargo.toml. Trailing
 /// `# comments` on the table header or the value are ignored (#27).
 fn workspace_version(manifest: &str) -> Option<String> {
@@ -1669,7 +1803,7 @@ fn workspace_version(manifest: &str) -> Option<String> {
             let rest = rest.trim_start();
             if let Some(v) = rest.strip_prefix('=') {
                 // Basic ("...") or literal ('...') string; strip either kind of quote.
-                return Some(v.trim().trim_matches(['"', '\'']).to_string());
+                return Some(strip_toml_quotes(v.trim()).to_string());
             }
         }
     }
@@ -1783,29 +1917,127 @@ mod tests {
 
     #[test]
     fn docs_gate_rules() {
-        let v = |files: &[&str]| {
-            docs_gate_violations(&files.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        let v = |files: &[&str], grew: bool| {
+            docs_gate_violations(
+                &files.iter().map(|f| Change::m(f)).collect::<Vec<_>>(),
+                grew,
+            )
         };
-        assert!(
-            v(&["kernel/src/main.rs"]).len() == 1,
-            "code without changelog"
+        assert_eq!(
+            v(&["kernel/src/main.rs", "CHANGELOG.md"], false).len(),
+            1,
+            "changelog touched but Unreleased did not grow"
         );
-        assert!(v(&["kernel/src/main.rs", "CHANGELOG.md"]).is_empty());
-        assert!(v(&["Cargo.toml"]).len() == 1);
-        assert!(
-            v(&["xtask/src/main.rs", "CHANGELOG.md"]).len() == 1,
-            "xtask without README"
+        assert!(v(&["kernel/src/main.rs", "CHANGELOG.md"], true).is_empty());
+        assert_eq!(v(&["Cargo.toml"], false).len(), 1);
+        assert_eq!(
+            v(&["xtask/src/main.rs", "CHANGELOG.md"], true).len(),
+            1,
+            "xtask without README/CLAUDE/PLAN"
         );
-        assert!(v(&["xtask/src/main.rs", "CHANGELOG.md", "README.md"]).is_empty());
-        assert!(v(&[".github/workflows/ci.yml"]).len() == 1);
-        assert!(v(&[".github/workflows/ci.yml", "docs/PLAN.md"]).is_empty());
-        assert!(v(&["docs/abi.md"]).len() == 1);
-        assert!(v(&["docs/abi.md", "docs/adr/0002-abi-v1.md"]).is_empty());
+        assert!(v(&["xtask/src/main.rs", "CHANGELOG.md", "README.md"], true).is_empty());
+        assert_eq!(v(&[".github/workflows/ci.yml"], true).len(), 1);
+        assert!(v(&[".github/workflows/ci.yml", "docs/PLAN.md"], true).is_empty());
+        assert_eq!(
+            v(&["docs/abi.md", "docs/adr/0001-old.md"], true).len(),
+            1,
+            "modified ADR does not count"
+        );
+        let added_adr = vec![
+            Change::m("docs/abi.md"),
+            Change {
+                status: 'A',
+                path: "docs/adr/0002-abi-v1.md".into(),
+            },
+        ];
+        assert!(docs_gate_violations(&added_adr, true).is_empty());
         assert!(
-            v(&["README.md", "docs/PLAN.md"]).is_empty(),
+            v(&["README.md", "docs/PLAN.md"], false).is_empty(),
             "docs-only change"
         );
-        assert!(v(&[]).is_empty());
+        assert!(v(&[], false).is_empty());
+    }
+
+    #[test]
+    fn changelog_unreleased_growth_is_content_based() {
+        let before = "# C\n\n## [Unreleased]\n\n### Added\n- old line\n\n## [0.1.0] - 2026-09-27\n- released\n";
+        let grown = "# C\n\n## [Unreleased]\n\n### Added\n- old line\n- new line\n\n## [0.1.0] - 2026-09-27\n- released\n";
+        let only_history = "# C\n\n## [Unreleased]\n\n### Added\n- old line\n\n## [0.1.0] - 2026-09-27\n- released\n- edited history\n";
+        assert!(!unreleased_grew(before, before));
+        assert!(unreleased_grew(before, grown));
+        assert!(
+            !unreleased_grew(before, only_history),
+            "touching a released section must not count"
+        );
+        assert!(unreleased_grew("", "## [Unreleased]\n- first\n"));
+    }
+
+    #[test]
+    fn skip_marker_requires_a_reason() {
+        assert_eq!(skip_reason("normal PR body").unwrap(), None);
+        assert!(
+            skip_reason("please docs-gate: skip").is_err(),
+            "bare marker"
+        );
+        assert!(
+            skip_reason("docs-gate: skip — short").is_err(),
+            "reason too short"
+        );
+        assert_eq!(
+            skip_reason(
+                "x\ndocs-gate: skip — internal refactor of a helper, no behaviour change\ny"
+            )
+            .unwrap()
+            .as_deref(),
+            Some("internal refactor of a helper, no behaviour change")
+        );
+        assert!(
+            skip_reason("docs-gate: skip - hyphen separator also works fine here")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn name_status_lines_parse() {
+        assert_eq!(Change::parse("M\tsrc/a.rs"), Some(Change::m("src/a.rs")));
+        assert_eq!(
+            Change::parse("A\tdocs/adr/0002.md"),
+            Some(Change {
+                status: 'A',
+                path: "docs/adr/0002.md".into()
+            })
+        );
+        assert_eq!(
+            Change::parse("R100\told.rs\tnew.rs"),
+            Some(Change {
+                status: 'R',
+                path: "new.rs".into()
+            })
+        );
+        assert_eq!(Change::parse(""), None);
+    }
+
+    #[test]
+    fn github_output_write_failures_are_errors() {
+        let dir = std::env::temp_dir().join(format!("carv-xtask-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A directory is not writable as a file: must fail, not silently succeed (#26).
+        assert!(append_github_output(&dir, "version=1\n").is_err());
+        let file = dir.join("out");
+        append_github_output(&file, "a=1\n").unwrap();
+        append_github_output(&file, "b=2\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "a=1\nb=2\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn toml_quote_stripping_keeps_inner_quotes() {
+        assert_eq!(strip_toml_quotes("\"0.1.0\""), "0.1.0");
+        assert_eq!(strip_toml_quotes("'0.1.0\"'"), "0.1.0\"");
+        assert_eq!(strip_toml_quotes("\"a'b\""), "a'b");
+        assert_eq!(strip_toml_quotes("plain"), "plain");
+        assert_eq!(strip_toml_quotes("\""), "\"");
     }
 
     #[test]

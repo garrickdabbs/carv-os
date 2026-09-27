@@ -3,26 +3,42 @@
 //! The bitmap itself is carved out of the first usable region large enough to hold it and is
 //! reached through the higher-half direct map (HHDM), so this module needs no paging code of its
 //! own. All logic lives in the pure `carv-frames` crate; this file only maps Limine's view of
-//! memory onto it and guards the allocator with a lock.
+//! memory onto it and guards the allocator with a lock. Every lock acquisition runs with
+//! interrupts disabled (`SpinLock` is not interrupt-safe on its own) so a future interrupt handler
+//! that needs a frame can never deadlock against a preempted holder.
 
-use carv_frames::{BitmapAllocator, FRAME_SIZE, bitmap_words};
+use carv_frames::{BitmapAllocator, FRAME_SIZE, storage_words};
 use limine::memmap::{Entry, MEMMAP_USABLE};
 use x86_64::PhysAddr;
 
-use crate::sync::SpinLock;
+use crate::sync::{SpinLock, without_interrupts};
 
-/// A 4 KiB physical frame, identified by its base address.
+/// A 4 KiB physical frame, identified by its base address. Only constructible for frame-aligned
+/// addresses; freeing one that this allocator did not hand out is rejected at runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Frame(pub PhysAddr);
+pub struct Frame(PhysAddr);
 
 impl Frame {
-    /// Frame index (`base / FRAME_SIZE`).
-    pub fn index(self) -> usize {
-        (self.0.as_u64() / FRAME_SIZE as u64) as usize
+    /// Wraps `addr` if it is 4 KiB aligned.
+    pub fn new(addr: PhysAddr) -> Option<Self> {
+        addr.as_u64()
+            .is_multiple_of(FRAME_SIZE as u64)
+            .then_some(Frame(addr))
     }
 
-    fn from_index(index: usize) -> Self {
+    /// Frame for bitmap index `index`.
+    pub fn from_index(index: usize) -> Self {
         Frame(PhysAddr::new((index * FRAME_SIZE) as u64))
+    }
+
+    /// Physical base address.
+    pub fn start(self) -> PhysAddr {
+        self.0
+    }
+
+    /// Bitmap index (`base / FRAME_SIZE`).
+    pub fn index(self) -> usize {
+        (self.0.as_u64() / FRAME_SIZE as u64) as usize
     }
 }
 
@@ -31,7 +47,7 @@ impl Frame {
 pub struct Layout {
     /// Physical address of the bitmap storage.
     pub bitmap_phys: PhysAddr,
-    /// Bitmap size in bytes.
+    /// Bitmap storage size in bytes (used map + allocated map).
     pub bitmap_bytes: usize,
     /// Frames covered by the bitmap (up to the highest usable address).
     pub frame_count: usize,
@@ -40,6 +56,14 @@ pub struct Layout {
 }
 
 static ALLOCATOR: SpinLock<Option<BitmapAllocator<'static>>> = SpinLock::new(None);
+
+/// Runs `f` with the allocator locked and interrupts disabled.
+fn with_allocator<R>(f: impl FnOnce(&mut BitmapAllocator<'static>) -> R) -> R {
+    without_interrupts(|| {
+        let mut guard = ALLOCATOR.lock();
+        f(guard.as_mut().expect("frame allocator not initialised"))
+    })
+}
 
 /// Builds the allocator from Limine's memory map. `hhdm_offset` is the higher-half direct map
 /// base, so physical address `p` is readable at virtual `hhdm_offset + p`.
@@ -54,7 +78,7 @@ pub fn init(entries: &[&Entry], hhdm_offset: u64) -> Layout {
         .max()
         .expect("Limine memory map has no usable region");
     let frame_count = (top / FRAME_SIZE as u64) as usize;
-    let words = bitmap_words(frame_count);
+    let words = storage_words(frame_count);
     let bitmap_bytes = words * 8;
     let bitmap_frames = bitmap_bytes.div_ceil(FRAME_SIZE);
 
@@ -88,27 +112,22 @@ pub fn init(entries: &[&Entry], hhdm_offset: u64) -> Layout {
         frame_count,
         free_frames: alloc.free_frames(),
     };
-    *ALLOCATOR.lock() = Some(alloc);
+    without_interrupts(|| *ALLOCATOR.lock() = Some(alloc));
     layout
 }
 
-/// Allocates one frame. `None` when memory is exhausted (or before [`init`]).
+/// Allocates one frame. `None` when memory is exhausted.
 pub fn allocate() -> Option<Frame> {
-    ALLOCATOR
-        .lock()
-        .as_mut()
-        .and_then(|a| a.allocate())
-        .map(Frame::from_index)
+    with_allocator(|a| a.allocate()).map(Frame::from_index)
 }
 
-/// Returns a frame to the allocator.
+/// Returns a frame obtained from [`allocate`]. Frames that were never handed out — including
+/// reservations such as frame 0 and the bitmap's own storage — are rejected.
 ///
 /// # Panics
-/// On double free or out-of-range frames: both are kernel bugs, not runtime conditions.
+/// On double free, reserved or out-of-range frames: all are kernel bugs, not runtime conditions.
 pub fn free(frame: Frame) {
-    let mut guard = ALLOCATOR.lock();
-    let alloc = guard.as_mut().expect("frame allocator not initialised");
-    if let Err(e) = alloc.free(frame.index()) {
+    if let Err(e) = with_allocator(|a| a.free(frame.index())) {
         panic!("frame::free({:#x}): {e:?}", frame.0.as_u64());
     }
 }
@@ -136,8 +155,5 @@ pub fn self_check(hhdm_offset: u64) -> Frame {
 
 /// `(free, total)` frame counts.
 pub fn stats() -> (usize, usize) {
-    ALLOCATOR
-        .lock()
-        .as_ref()
-        .map_or((0, 0), |a| (a.free_frames(), a.frame_count()))
+    with_allocator(|a| (a.free_frames(), a.frame_count()))
 }
