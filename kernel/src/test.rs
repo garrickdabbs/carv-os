@@ -331,8 +331,11 @@ fn acpi_summary_lists_apics_hpet_and_ecam() {
     assert!(!s.tables.is_empty(), "no ACPI tables found");
     assert!(
         s.tables.iter().any(|t| t == b"APIC"),
-        "MADT missing from {:?}",
-        s.tables.len()
+        "MADT missing; tables found: {:?}",
+        s.tables
+            .iter()
+            .map(|t| core::str::from_utf8(t).unwrap_or("????"))
+            .collect::<alloc::vec::Vec<_>>()
     );
     assert!(!s.cpu_apic_ids.is_empty(), "MADT lists no processors");
     assert_eq!(
