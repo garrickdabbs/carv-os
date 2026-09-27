@@ -1620,8 +1620,22 @@ fn check_release(tag: &str, version: &str, changelog: &str) -> Result<ReleaseInf
 /// Extracts `version = "..."` from the `[workspace.package]` table of a Cargo.toml. Trailing
 /// `# comments` on the table header or the value are ignored (#27).
 fn workspace_version(manifest: &str) -> Option<String> {
+    /// Cuts a trailing `# comment`, but not a `#` inside a basic or literal string (#31).
     fn strip_comment(l: &str) -> &str {
-        l.split_once('#').map_or(l, |(code, _)| code).trim()
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        for (i, c) in l.char_indices() {
+            match quote {
+                Some('"') if escaped => escaped = false,
+                Some('"') if c == '\\' => escaped = true,
+                Some(q) if c == q => quote = None,
+                Some(_) => {}
+                None if c == '"' || c == '\'' => quote = Some(c),
+                None if c == '#' => return l[..i].trim(),
+                None => {}
+            }
+        }
+        l.trim()
     }
     let mut in_table = false;
     for line in manifest.lines() {
@@ -1633,7 +1647,8 @@ fn workspace_version(manifest: &str) -> Option<String> {
         if in_table && let Some(rest) = t.strip_prefix("version") {
             let rest = rest.trim_start();
             if let Some(v) = rest.strip_prefix('=') {
-                return Some(v.trim().trim_matches('"').to_string());
+                // Basic ("...") or literal ('...') string; strip either kind of quote.
+                return Some(v.trim().trim_matches(['"', '\'']).to_string());
             }
         }
     }
@@ -1855,6 +1870,11 @@ mod tests {
             workspace_version("# [workspace.package]\nversion = \"1\"\n"),
             None
         );
+        // `#` inside a quoted value is part of the value, not a comment (#31).
+        let q = "[workspace.package]\nversion = \"0.1.0#build\" # trailing\n";
+        assert_eq!(workspace_version(q).as_deref(), Some("0.1.0#build"));
+        let lit = "[workspace.package]\nversion = '0.1.0#x'\n";
+        assert_eq!(workspace_version(lit).as_deref(), Some("0.1.0#x"));
     }
 
     #[test]

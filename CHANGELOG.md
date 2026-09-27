@@ -11,6 +11,7 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   workflow refuses to publish without an explicit prerelease decision (#26); `[workspace.package]` parsing
   tolerates TOML comments (#27); the nightly stress loop checks `cargo xtask smoke`'s exit code rather than
   grepping one line (#28).
+- `release-check`'s TOML comment stripping respects quoted strings (#31).
 
 ## [0.1.0] - 2026-09-27
 
