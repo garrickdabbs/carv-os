@@ -19,15 +19,16 @@ use crate::sync::{SpinLock, without_interrupts};
 pub struct Frame(PhysAddr);
 
 impl Frame {
-    /// Wraps `addr` if it is 4 KiB aligned.
-    pub fn new(addr: PhysAddr) -> Option<Self> {
+    /// Wraps `addr` if it is 4 KiB aligned. Crate-private: only memory-management code may mint
+    /// frames; everyone else obtains them from [`allocate`].
+    pub(super) fn new(addr: PhysAddr) -> Option<Self> {
         addr.as_u64()
             .is_multiple_of(FRAME_SIZE as u64)
             .then_some(Frame(addr))
     }
 
-    /// Frame for bitmap index `index`.
-    pub fn from_index(index: usize) -> Self {
+    /// Frame for bitmap index `index` (crate-private, see [`Frame::new`]).
+    pub(crate) fn from_index(index: usize) -> Self {
         Frame(PhysAddr::new((index * FRAME_SIZE) as u64))
     }
 
@@ -102,9 +103,14 @@ pub fn init(entries: &[&Entry], hhdm_offset: u64) -> Layout {
             (e.length / FRAME_SIZE as u64) as usize,
         );
     }
-    alloc.mark_used_range((home.base / FRAME_SIZE as u64) as usize, bitmap_frames);
+    // Nothing has been allocated yet, so reservations cannot fail.
+    alloc
+        .mark_used_range((home.base / FRAME_SIZE as u64) as usize, bitmap_frames)
+        .expect("reserving the bitmap during init");
     // Never hand out frame 0: a null physical address is too easy to mistake for "no frame".
-    alloc.mark_used_range(0, 1);
+    alloc
+        .mark_used_range(0, 1)
+        .expect("reserving frame 0 during init");
 
     let layout = Layout {
         bitmap_phys,
@@ -151,6 +157,12 @@ pub fn self_check(hhdm_offset: u64) -> Frame {
     free(frame);
     assert_eq!(stats().0, free_before, "free count not restored");
     frame
+}
+
+/// Whether `frame` is currently handed out by [`allocate`] — i.e. the caller may legitimately
+/// own it. Reserved frames (frame 0, the bitmap, firmware areas) are never allocated.
+pub fn is_allocated(frame: Frame) -> bool {
+    with_allocator(|a| a.is_allocated(frame.index()))
 }
 
 /// `(free, total)` frame counts.

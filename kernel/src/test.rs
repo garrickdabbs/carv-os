@@ -220,6 +220,13 @@ fn paging_refuses_pages_outside_the_dynamic_region() {
         paging::unmap(kernel_page),
         Err(paging::UnmapFail::OutsideDynamicRegion)
     ));
+    // A frame the allocator never handed out (frame 0 is reserved) is refused as not owned.
+    let reserved = crate::mm::frame::Frame::from_index(0);
+    let page0 = Page::containing_address(VirtAddr::new(paging::KERNEL_DYNAMIC_BASE + 0x60_0000));
+    assert!(matches!(
+        paging::map(page0, reserved, paging::KERNEL_DATA),
+        Err((paging::MapError::FrameNotOwned, _))
+    ));
     // Mapping the same dynamic page twice fails and still returns the frame.
     let addr = VirtAddr::new(paging::KERNEL_DYNAMIC_BASE + 0x50_0000);
     let page = Page::containing_address(addr);

@@ -9,7 +9,9 @@
 //!
 //! `map` and `unmap` only accept pages inside the dynamic region: the HHDM and the kernel image
 //! are what the kernel is executing through, and nothing should be able to remap them by
-//! accident through a safe API. Lock acquisitions run with interrupts disabled.
+//! accident through a safe API. `map` also refuses frames the allocator has not handed out, so
+//! frame 0, the bitmap or firmware memory cannot be mapped by mistake. Lock acquisitions run
+//! with interrupts disabled.
 
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::mapper::{MapToError, UnmapError};
@@ -38,6 +40,9 @@ pub const KERNEL_DATA: PageTableFlags = PageTableFlags::PRESENT
 pub enum MapError {
     /// The page is not inside the kernel dynamic region.
     OutsideDynamicRegion,
+    /// The frame is not currently allocated by `mm::frame` (reserved, freed, or never handed out),
+    /// so the caller cannot own it.
+    FrameNotOwned,
     /// The page-table walk failed (already mapped, or no frame for an intermediate table).
     Mapper(MapToError<Size4KiB>),
 }
@@ -47,6 +52,9 @@ impl core::fmt::Display for MapError {
         match self {
             MapError::OutsideDynamicRegion => {
                 f.write_str("page is outside the kernel dynamic region")
+            }
+            MapError::FrameNotOwned => {
+                f.write_str("frame is not an allocated frame (reserved or freed)")
             }
             MapError::Mapper(e) => write!(f, "page-table walk failed: {e:?}"),
         }
@@ -134,6 +142,9 @@ pub fn map(
 ) -> Result<(), (MapError, Frame)> {
     if !in_dynamic_region(page) {
         return Err((MapError::OutsideDynamicRegion, frame));
+    }
+    if !frame::is_allocated(frame) {
+        return Err((MapError::FrameNotOwned, frame));
     }
     let result = with_mapper(|mapper| {
         // SAFETY: the caller owns `frame` (it came from `frame::allocate`) and `page` is inside the

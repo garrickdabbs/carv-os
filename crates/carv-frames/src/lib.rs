@@ -38,6 +38,8 @@ pub enum FrameError {
     OutOfRange,
     /// The frame was not handed out by `allocate` (never allocated, already freed, or reserved).
     NotAllocated,
+    /// A reservation was requested over a frame that is currently allocated.
+    Allocated,
 }
 
 /// A bitmap of frames. Index `i` covers physical bytes `[i * FRAME_SIZE, (i + 1) * FRAME_SIZE)`.
@@ -139,16 +141,22 @@ impl<'a> BitmapAllocator<'a> {
         }
     }
 
-    /// Reserves `count` frames starting at `first` (e.g. the bitmap's own storage). Frames that
-    /// are currently allocated stay allocated; the reservation applies once they are freed.
-    pub fn mark_used_range(&mut self, first: usize, count: usize) {
+    /// Reserves `count` frames starting at `first` (e.g. the bitmap's own storage). Reservations
+    /// belong to the initialisation phase: if any frame in the range is currently *allocated* the
+    /// call changes nothing and returns [`FrameError::Allocated`], because a reservation over a
+    /// live allocation could not be honoured once the frame is freed.
+    pub fn mark_used_range(&mut self, first: usize, count: usize) -> Result<(), FrameError> {
         let end = first.saturating_add(count).min(self.frame_count);
+        if (first..end).any(|i| self.allocated_bit(i)) {
+            return Err(FrameError::Allocated);
+        }
         for i in first..end {
             if !self.used_bit(i) {
                 self.set_used(i, true);
                 self.free -= 1;
             }
         }
+        Ok(())
     }
 
     /// Allocates one frame, lowest free index first (from the scan hint). `None` when exhausted.
@@ -237,7 +245,7 @@ mod tests {
         let (mut bits, n) = fresh(12_345);
         let mut a = BitmapAllocator::new(&mut bits, n);
         a.free_range(0, n);
-        a.mark_used_range(0, 100); // pretend the bitmap lives in the first 100 frames
+        a.mark_used_range(0, 100).unwrap(); // pretend the bitmap lives in the first 100 frames
         let before = a.free_frames();
         assert_eq!(before, n - 100);
 
@@ -278,7 +286,7 @@ mod tests {
         let (mut bits, n) = fresh(64);
         let mut a = BitmapAllocator::new(&mut bits, n);
         a.free_range(0, n);
-        a.mark_used_range(0, 4); // reserved: e.g. the bitmap's own frames
+        a.mark_used_range(0, 4).unwrap(); // reserved: e.g. the bitmap's own frames
         let f = a.allocate().unwrap();
         assert_eq!(a.free(f), Ok(()));
         assert_eq!(a.free(f), Err(FrameError::NotAllocated), "double free");
@@ -290,6 +298,32 @@ mod tests {
         assert!(a.is_used(0), "reservation cleared by a bogus free");
         assert_eq!(a.free(64), Err(FrameError::OutOfRange));
         assert_eq!(a.free(usize::MAX), Err(FrameError::OutOfRange));
+    }
+
+    #[test]
+    fn reservations_cannot_cover_allocated_frames() {
+        let (mut bits, n) = fresh(64);
+        let mut a = BitmapAllocator::new(&mut bits, n);
+        a.free_range(0, n);
+        let f = a.allocate().unwrap();
+        assert_eq!(a.mark_used_range(f, 1), Err(FrameError::Allocated));
+        assert_eq!(
+            a.mark_used_range(0, n),
+            Err(FrameError::Allocated),
+            "range containing an allocated frame"
+        );
+        assert_eq!(
+            a.free_frames(),
+            n - 1,
+            "a refused reservation changes nothing"
+        );
+        a.free(f).unwrap();
+        assert_eq!(a.mark_used_range(f, 1), Ok(()));
+        assert_eq!(
+            a.free(f),
+            Err(FrameError::NotAllocated),
+            "now reserved, not freeable"
+        );
     }
 
     #[test]

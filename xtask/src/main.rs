@@ -158,8 +158,9 @@ fn print_help() {
     println!(
         "                                   Boot UEFI, BIOS and panic scenarios; check serial output"
     );
+    println!("  docs-gate [--base REF] [--repo PATH]");
     println!(
-        "  docs-gate [--base REF]           Fail if code changed without documentation (default base: main)"
+        "                                   Fail if code changed without documentation (default base: main)"
     );
     println!(
         "  perf [--runs N]                  Kernel/ISO size and boot timings vs budgets (report in target/perf/)"
@@ -1009,22 +1010,30 @@ impl Change {
 /// one, `Ok(None)` when absent.
 fn skip_reason(body: &str) -> Result<Option<String>, String> {
     const MARKER: &str = "docs-gate: skip";
-    let Some(pos) = body.find(MARKER) else {
-        return Ok(None);
-    };
-    let rest = body[pos + MARKER.len()..]
-        .lines()
-        .next()
-        .unwrap_or("")
-        .trim_start_matches([' ', '—', '-', ':', '–'])
-        .trim();
-    if rest.chars().count() >= 20 {
-        Ok(Some(rest.to_string()))
-    } else {
-        Err(format!(
-            "`{MARKER}` found without a reason (need at least 20 characters after the marker on the same line)"
-        ))
+    const SEPARATORS: [char; 5] = [' ', '—', '-', ':', '–'];
+    // A directive is a line that *starts* with the marker (after optional list/quote punctuation)
+    // and continues with a separator or nothing — never a mention inside prose or code.
+    for line in body.lines() {
+        let l = line
+            .trim()
+            .trim_start_matches(['-', '*', '>', ' '])
+            .trim_start();
+        let Some(rest) = l.strip_prefix(MARKER) else {
+            continue;
+        };
+        if !(rest.is_empty() || rest.starts_with(SEPARATORS)) {
+            continue; // e.g. "docs-gate: skipfoo …" is not the directive
+        }
+        let reason = rest.trim_start_matches(SEPARATORS).trim();
+        return if reason.chars().count() >= 20 {
+            Ok(Some(reason.to_string()))
+        } else {
+            Err(format!(
+                "`{MARKER}` directive found without a reason (need at least 20 characters after the marker on the same line)"
+            ))
+        };
     }
+    Ok(None)
 }
 
 /// Text of the `## [Unreleased]` section: from that heading up to the next `## [` heading.
@@ -1975,9 +1984,11 @@ mod tests {
     #[test]
     fn skip_marker_requires_a_reason() {
         assert_eq!(skip_reason("normal PR body").unwrap(), None);
-        assert!(
-            skip_reason("please docs-gate: skip").is_err(),
-            "bare marker"
+        assert!(skip_reason("docs-gate: skip").is_err(), "bare directive");
+        assert_eq!(
+            skip_reason("please docs-gate: skip").unwrap(),
+            None,
+            "mid-line mention is not a directive"
         );
         assert!(
             skip_reason("docs-gate: skip — short").is_err(),
@@ -1993,6 +2004,20 @@ mod tests {
         );
         assert!(
             skip_reason("docs-gate: skip - hyphen separator also works fine here")
+                .unwrap()
+                .is_some()
+        );
+        // Not directives: a mention inside prose, or the marker glued to other text.
+        assert_eq!(
+            skip_reason("write `docs-gate: skip — reason` in the PR body if truly needed").unwrap(),
+            None
+        );
+        assert_eq!(
+            skip_reason("docs-gate: skipfoo this is a long sentence that is not it").unwrap(),
+            None
+        );
+        assert!(
+            skip_reason("- docs-gate: skip — list-item directive with a proper reason")
                 .unwrap()
                 .is_some()
         );
