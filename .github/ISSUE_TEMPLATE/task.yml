@@ -1,0 +1,28 @@
+name: Roadmap task
+description: One task ID from docs/PLAN.md
+title: "P0.0: "
+labels: [kind:task]
+body:
+  - type: input
+    id: task-id
+    attributes:
+      label: Task ID
+      description: As written in docs/PLAN.md, e.g. P1.2
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Copy from the plan. These are what the PR must prove.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Directories this task may touch; interfaces it depends on (e.g. "after P2.10 ABI freeze").
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / open questions

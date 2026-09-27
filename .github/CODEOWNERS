@@ -1,0 +1,11 @@
+# Review is requested from these owners automatically. Everything defaults to the maintainer;
+# the explicit lines mark the areas where a change needs deliberate attention.
+*                   @garrickdabbs
+
+/kernel/            @garrickdabbs
+/crates/carv-abi/   @garrickdabbs
+/docs/abi.md        @garrickdabbs
+/docs/adr/          @garrickdabbs
+/.github/           @garrickdabbs
+/deny.toml          @garrickdabbs
+/SECURITY.md        @garrickdabbs

@@ -1,0 +1,31 @@
+name: Bug
+description: Something boots, builds, or behaves wrongly
+labels: [kind:bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Exact commands, starting from a clean checkout.
+      placeholder: |
+        git checkout <sha>
+        cargo xtask run --cmdline "..." --timeout 30
+    validations:
+      required: true
+  - type: textarea
+    id: serial
+    attributes:
+      label: Serial log
+      description: Paste the serial output (or attach target/smoke/*.log). For hangs/triple faults, also attach target/qemu.log from `cargo xtask run --debug`.
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Host OS, QEMU version (`qemu-system-x86_64 --version`), KVM or TCG, UEFI or --bios

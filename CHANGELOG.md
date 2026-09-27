@@ -14,3 +14,10 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - P0.3: 16550 serial driver on COM1 with loopback self-test, `kprint!`/`kprintln!`, a panic handler that
   reports file:line and message over serial, `SpinLock`, port I/O primitives, and
   `cargo xtask run --cmdline STR` (Limine passes it to the kernel; `panic-test` triggers a test panic).
+- Repository infrastructure (P0.5/P0.6 partial): README with build, test and install instructions; CI
+  workflow (`lint`, `host-tests`, `boot-smoke`, `docs-gate`, `image`, `all-green` gate) with SHA-pinned
+  actions and least-privilege permissions; `cargo deny` policy; Dependabot for crates and actions;
+  CODEOWNERS, PR and issue templates; `SECURITY.md`.
+- `cargo xtask smoke` (UEFI, BIOS and panic boot scenarios with serial-output checks) and
+  `cargo xtask docs-gate` (code changes must carry documentation), the latter also wired as a Claude
+  Code Stop hook in `.claude/settings.json`.

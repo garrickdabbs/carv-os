@@ -7,7 +7,9 @@ Read it before starting any task.
 - `cargo xtask build` — build kernel, services, userland
 - `cargo xtask image [--release]` — build `target/carv-os.iso` (UEFI + BIOS) and `target/data.img`
 - `cargo xtask run [--release] [--bios] [--debug] [--timeout SECS]` — boot in QEMU (serial on stdio); `--debug` logs int/reset to `target/qemu.log`; always pass `--timeout` in scripts
-- `cargo xtask test` — host unit tests + in-kernel tests + QEMU integration tests. **Must pass before any PR.**
+- `cargo xtask smoke [--release] [--timeout SECS]` — boot UEFI, BIOS and panic scenarios in QEMU and check serial output; logs in `target/smoke/`
+- `cargo xtask docs-gate [--base REF]` — fail (exit 2) if code changed without documentation; runs in CI and as the Stop hook in `.claude/settings.json`
+- `cargo xtask test` — host unit tests + in-kernel tests + QEMU integration tests (arrives in P0.4). **Must pass before any PR.** Until then: `cargo test --workspace`, `cargo xtask smoke`, clippy, fmt, `cargo deny check`.
 - `cargo xtask gdb` — boot paused with gdb stub attached
 
 ## Rules
@@ -21,5 +23,5 @@ Read it before starting any task.
 - Don't mark a task done without pasting `cargo xtask test` output. If blocked on a design question, write it up and stop.
 - Update the status table in `docs/PLAN.md` §11 when you open a PR.
 - clippy with `-D warnings` and `cargo fmt` must be clean.
-- Add a line under *Unreleased* in `CHANGELOG.md` for any user-visible change.
+- **Documentation travels with code** (enforced by `cargo xtask docs-gate` in CI and on Stop): any change under `kernel/`, `crates/`, `services/`, `userland/`, `xtask/` or `Cargo.toml` needs a `CHANGELOG.md` line under *Unreleased*; `xtask` changes need README.md/CLAUDE.md/PLAN.md updated; workflow changes need PLAN.md §7 or README updated; `docs/abi.md` changes need an ADR. Do not disable the hook or use `docs-gate: skip` without a stated reason.
 - Workflows: pin every action to a full commit SHA, keep top-level `permissions: contents: read`, never add secrets. Never edit the `main` ruleset or bypass CI. See PLAN.md §7.
