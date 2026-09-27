@@ -6,6 +6,15 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Added
+- P1.4: kernel heap — `kernel::mm::heap` maps 1 MiB of fresh frames at `KERNEL_DYNAMIC_BASE + 256 MiB` and
+  installs `linked_list_allocator` (no default features) as the `#[global_allocator]` behind the kernel spin lock
+  with interrupts off; `alloc` is enabled in `chisel`; boot prints the heap layout; in-kernel tests exercise
+  `Vec`/`Box`/`BTreeMap` and prove memory returns to baseline after 200 allocate/free rounds. Bytes in use are
+  counted for the Budget accounting that arrives with P2.4. An explicit `#[alloc_error_handler]` reports
+  `kernel heap exhausted` with the request and heap state and takes the panic path; the `oom` smoke scenario
+  (`oom-test` on the cmdline) proves it.
+
 ### Fixed
 - `cargo xtask image` pins the ISO's volume id (`CARVOS`), application id (`CarvOS`) and preparer id: without
   them xorriso writes its own version string into the volume descriptors, the one remaining difference (16 bytes)

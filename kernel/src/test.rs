@@ -253,3 +253,54 @@ fn interrupts_are_disabled_at_boot() {
     // Limine hands us the CPU with IF clear and we have no IDT yet; anything else is a bug.
     assert!(!crate::arch::x86_64::interrupts_enabled());
 }
+
+#[test_case]
+fn heap_vec_box_and_btreemap_work() {
+    use alloc::boxed::Box;
+    use alloc::collections::BTreeMap;
+    use alloc::vec::Vec;
+    let mut v: Vec<u64> = Vec::new();
+    for i in 0..10_000u64 {
+        v.push(i * 3);
+    }
+    assert_eq!(v.len(), 10_000);
+    assert_eq!(v.iter().sum::<u64>(), 3 * (9_999 * 10_000 / 2));
+    let b = Box::new([0xA5u8; 4096]);
+    assert!(b.iter().all(|&x| x == 0xA5));
+    let mut m: BTreeMap<u32, &str> = BTreeMap::new();
+    for (k, name) in [(3, "three"), (1, "one"), (2, "two")] {
+        m.insert(k, name);
+    }
+    assert_eq!(
+        m.values().copied().collect::<Vec<_>>(),
+        ["one", "two", "three"]
+    );
+    assert_eq!(m.get(&2), Some(&"two"));
+}
+
+#[test_case]
+fn heap_returns_memory_after_drop() {
+    use crate::mm::heap;
+    use alloc::vec::Vec;
+    let before = heap::stats();
+    assert!(
+        before.free > 512 * 1024,
+        "heap should have most of its {} bytes free at test time",
+        before.size
+    );
+    for round in 0..200usize {
+        let v: Vec<u8> = (0..(round % 97) + 1).map(|x| x as u8).collect();
+        let big: Vec<u64> = alloc::vec![round as u64; 4096];
+        assert_eq!(big[4095], round as u64);
+        assert_eq!(v.len(), (round % 97) + 1);
+    }
+    let after = heap::stats();
+    assert_eq!(
+        after.in_use, before.in_use,
+        "live bytes must return to baseline"
+    );
+    assert_eq!(
+        after.used, before.used,
+        "allocator usage must return to baseline"
+    );
+}
