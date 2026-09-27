@@ -1565,11 +1565,17 @@ fn release_check(args: &[String]) -> Result<(), String> {
     let info = check_release(&tag, &version, &changelog)?;
     let out = format!("version={version}\nprerelease={}\n", info.prerelease);
     print!("{out}");
+    // The workflow decides --prerelease from this output, so failing to write it is an error,
+    // not a warning (#26).
     if let Ok(path) = env::var("GITHUB_OUTPUT") {
         use std::io::Write;
-        if let Ok(mut f) = fs::OpenOptions::new().append(true).create(true).open(path) {
-            let _ = f.write_all(out.as_bytes());
-        }
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&path)
+            .map_err(|e| format!("opening GITHUB_OUTPUT ({path}): {e}"))?;
+        f.write_all(out.as_bytes())
+            .map_err(|e| format!("writing GITHUB_OUTPUT ({path}): {e}"))?;
     }
     println!("release-check: OK ({tag} ↔ {version}, changelog section present)");
     Ok(())
@@ -1611,11 +1617,15 @@ fn check_release(tag: &str, version: &str, changelog: &str) -> Result<ReleaseInf
     Ok(ReleaseInfo { prerelease })
 }
 
-/// Extracts `version = "..."` from the `[workspace.package]` table of a Cargo.toml.
+/// Extracts `version = "..."` from the `[workspace.package]` table of a Cargo.toml. Trailing
+/// `# comments` on the table header or the value are ignored (#27).
 fn workspace_version(manifest: &str) -> Option<String> {
+    fn strip_comment(l: &str) -> &str {
+        l.split_once('#').map_or(l, |(code, _)| code).trim()
+    }
     let mut in_table = false;
     for line in manifest.lines() {
-        let t = line.trim();
+        let t = strip_comment(line);
         if t.starts_with('[') {
             in_table = t == "[workspace.package]";
             continue;
@@ -1838,6 +1848,13 @@ mod tests {
         let m = "[workspace]\nmembers = [\"a\"]\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[profile.dev]\npanic = \"abort\"\n";
         assert_eq!(workspace_version(m).as_deref(), Some("0.1.0"));
         assert_eq!(workspace_version("[package]\nversion = \"9.9.9\"\n"), None);
+        // Comments after the header or the value are idiomatic TOML (#27).
+        let c = "[workspace.package]  # shared metadata\nversion = \"0.2.0\" # bump per release\n";
+        assert_eq!(workspace_version(c).as_deref(), Some("0.2.0"));
+        assert_eq!(
+            workspace_version("# [workspace.package]\nversion = \"1\"\n"),
+            None
+        );
     }
 
     #[test]

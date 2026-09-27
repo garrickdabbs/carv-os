@@ -42,14 +42,15 @@ jobs:
 
       - name: full test suite (release profile)
         run: cargo xtask test --release --timeout 120
-      - name: stress — 10 consecutive UEFI boots must all reach the banner
+      - name: stress — 10 consecutive boots (UEFI + BIOS each) must all pass
         run: |
-          set -e
+          set -euo pipefail
           cargo xtask image --release
           for i in $(seq 1 10); do
-            cargo xtask smoke --release --timeout 60 --iso target/carv-os.iso | grep -q "smoke: uefi   PASS" || { echo "::error::boot $i failed"; exit 1; }
+            # smoke exits non-zero if *any* scenario fails; never filter its exit code through grep (#28).
+            cargo xtask smoke --release --timeout 60 --iso target/carv-os.iso || { echo "::error::boot round $i failed"; exit 1; }
           done
-          echo "10/10 boots reached the banner"
+          echo "10/10 rounds passed"
       - name: performance budgets (10-run median)
         run: cargo xtask perf --runs 10
 

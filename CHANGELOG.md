@@ -6,6 +6,12 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Fixed
+- `release-check` fails instead of silently continuing when `GITHUB_OUTPUT` cannot be written, and the release
+  workflow refuses to publish without an explicit prerelease decision (#26); `[workspace.package]` parsing
+  tolerates TOML comments (#27); the nightly stress loop checks `cargo xtask smoke`'s exit code rather than
+  grepping one line (#28).
+
 ## [0.1.0] - 2026-09-27
 
 Phase 0 complete: CarvOS boots under Limine on UEFI and BIOS, brings up a serial console, runs its
