@@ -9,7 +9,7 @@
 
 ## Documentation
 <!-- The docs gate requires these; tick what applies. -->
-- [ ] `CHANGELOG.md` line under *Unreleased*
+- [ ] `CHANGELOG.md` line under *Unreleased* (release PR: the new `## [x.y.z]` heading instead)
 - [ ] README / CLAUDE.md / PLAN.md updated if commands, workflow, or design changed
 - [ ] `docs/PLAN.md` §11 status table updated
 - [ ] ADR added if an architectural decision or `docs/abi.md` changed

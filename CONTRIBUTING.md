@@ -16,7 +16,7 @@ Outside contributions are welcome; the same workflow applies to everyone.
    `cargo audit`).
 3. Open a PR against `main` using the template. Required checks: `build`, `boot-smoke`, `security`, `docs`,
    `perf`. **Documentation travels with code** (`cargo xtask docs-gate` enforces it): a `CHANGELOG.md` line under
-   *Unreleased*, and README / CLAUDE.md / PLAN updates when commands, workflow or design change.
+   *Unreleased* (a release PR instead adds the new `## [x.y.z]` heading), and README / CLAUDE.md / PLAN updates when commands, workflow or design change.
 4. Answer every review thread and resolve it; the `main` ruleset blocks merging otherwise. PRs merge with a
    **merge commit**.
 

@@ -1114,17 +1114,39 @@ fn unreleased_grew(before: &str, after: &str) -> bool {
 }
 
 /// Whether `after` has a `## [x.y.z]` version heading that `before` lacks: the signature of a
-/// release PR, which empties Unreleased rather than growing it.
+/// release PR, which empties Unreleased rather than growing it. Only a real SemVer label counts
+/// (`## [0.1.1]`, `## [0.2.0-rc.1] - 2026-…`), so `## [not-a-release]` cannot satisfy the gate.
 fn version_section_added(before: &str, after: &str) -> bool {
-    let headings = |s: &str| -> Vec<String> {
+    fn headings(s: &str) -> Vec<&str> {
         s.lines()
             .map(str::trim)
-            .filter(|l| l.starts_with("## [") && !l.starts_with("## [Unreleased]"))
-            .map(str::to_string)
+            .filter(|l| is_version_heading(l))
             .collect()
-    };
+    }
     let old = headings(before);
     headings(after).iter().any(|h| !old.contains(h))
+}
+
+/// `## [MAJOR.MINOR.PATCH]` or `## [MAJOR.MINOR.PATCH-pre.N]`, optionally followed by ` - date`.
+fn is_version_heading(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("## [") else {
+        return false;
+    };
+    let Some(end) = rest.find(']') else {
+        return false;
+    };
+    let (label, tail) = rest.split_at(end);
+    if !(tail == "]" || tail.starts_with("] ")) {
+        return false;
+    }
+    let (core, pre) = label.split_once('-').unwrap_or((label, ""));
+    let numeric = core.split('.').collect::<Vec<_>>();
+    numeric.len() == 3
+        && numeric
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        && (label.find('-').is_none()
+            || (!pre.is_empty() && pre.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')))
 }
 
 /// Paths whose change means "code changed" for the documentation gate.
@@ -2053,6 +2075,20 @@ mod tests {
             !version_section_added(released, before),
             "removing a heading is not a release"
         );
+        let fake =
+            "# C\n\n## [Unreleased]\n\n## [not-a-release]\n- sneaky\n\n## [0.1.0] - 2026-09-27\n";
+        assert!(
+            !version_section_added(before, fake),
+            "a non-version heading must not satisfy the gate"
+        );
+        assert!(is_version_heading("## [0.1.1] - 2026-09-27"));
+        assert!(is_version_heading("## [1.2.3]"));
+        assert!(is_version_heading("## [0.2.0-rc.1] - 2026-10-01"));
+        assert!(!is_version_heading("## [Unreleased]"));
+        assert!(!is_version_heading("## [1.2]"));
+        assert!(!is_version_heading("## [1.2.x]"));
+        assert!(!is_version_heading("## [1.2.3-]"));
+        assert!(!is_version_heading("## [1.2.3]x"));
     }
 
     #[test]
