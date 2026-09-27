@@ -6,6 +6,10 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Changed
+- `release.yml` retries `cosign sign-blob` up to four times with backoff on transient Sigstore network errors
+  (the `v0.1.1-rc.2` publish job needed a manual re-run) (#76).
+
 ### Added
 - P1.6: ACPI tables — `platform::acpi` parses the RSDP Limine hands over with the `acpi` crate (5.x, `alloc`),
   reaching tables through the HHDM (a region with pages the direct map skips is mapped whole, read-only and
