@@ -7,6 +7,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Added
+- P1.7: PCI(e) enumeration — `platform::pci` walks every MCFG ECAM region (bus 0 plus the secondary buses of
+  PCI-to-PCI bridges), mapping one configuration page per probed function into the kernel MMIO region, and
+  records vendor/device/class per function; virtio devices are named (blk, net, rng, console, 9p). Boot prints
+  the list, the UEFI/BIOS smoke scenarios expect `virtio-blk` and `virtio-net`, and an in-kernel test requires
+  the q35 host bridge and both virtio devices with matching class codes.
 - P1.6: ACPI tables — `platform::acpi` parses the RSDP Limine hands over with the `acpi` crate (5.x, `alloc`),
   reaching tables through the HHDM (pages the direct map skips are mapped into a small window), and keeps a
   `Summary`: table signatures, MADT local-APIC address, CPU APIC ids and I/O APICs, HPET base, and MCFG ECAM

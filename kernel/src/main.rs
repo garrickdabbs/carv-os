@@ -8,7 +8,8 @@
 //! pass/fail code. The physical frame allocator is built from the memory map (P1.2) and the
 //! bootloader's page tables are adopted for map/unmap/translate (P1.3), and a 1 MiB kernel heap
 //! backs `alloc` (P1.4). The legacy PICs are masked and the local APIC timer ticks at 1 kHz on
-//! vector 32 (P1.5); the ACPI tables are parsed into a platform summary (P1.6). Cmdline words `page-fault-test`, `stack-overflow-test` and `oom-test` exercise the page-fault
+//! vector 32 (P1.5); the ACPI tables are parsed into a platform summary (P1.6) and PCI(e) is
+//! enumerated through the MCFG's ECAM window (P1.7). Cmdline words `page-fault-test`, `stack-overflow-test` and `oom-test` exercise the page-fault
 //! handler and the guard-page → double-fault path.
 
 #![no_std]
@@ -211,6 +212,25 @@ extern "C" fn kmain() -> ! {
                 r.bus_start,
                 r.bus_end,
                 r.base
+            );
+        }
+        let devices = platform::pci::enumerate(&acpi.ecam);
+        kprintln!("  pci: {} function(s) found via ECAM", devices.len());
+        for d in &devices {
+            kprintln!(
+                "  pci: {:04x}:{:02x}:{:02x}.{} {:04x}:{:04x} class {:02x}.{:02x}.{:02x}{}",
+                d.segment,
+                d.bus,
+                d.device,
+                d.function,
+                d.vendor,
+                d.device_id,
+                d.class,
+                d.subclass,
+                d.prog_if,
+                d.virtio_name()
+                    .map(|n| alloc::format!(" {n}"))
+                    .unwrap_or_default()
             );
         }
         kprintln!(
