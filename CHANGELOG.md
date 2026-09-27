@@ -6,6 +6,13 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Added
+- P1.4: kernel heap — `kernel::mm::heap` maps 1 MiB of fresh frames at `KERNEL_DYNAMIC_BASE + 256 MiB` and
+  installs `linked_list_allocator` (no default features) as the `#[global_allocator]` behind the kernel spin lock
+  with interrupts off; `alloc` is enabled in `chisel`; boot prints the heap layout; in-kernel tests exercise
+  `Vec`/`Box`/`BTreeMap` and prove memory returns to baseline after 200 allocate/free rounds. Bytes in use are
+  counted for the Budget accounting that arrives with P2.4.
+
 ## [0.1.1] - 2026-09-27
 
 Phase 1 under way: the kernel now has a GDT/TSS/IDT with a handler for every exception, a physical

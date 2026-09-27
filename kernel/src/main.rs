@@ -6,8 +6,8 @@
 //! and `double-fault-test` exercise the panic handler and the double-fault path. In test builds
 //! (`cargo xtask test --kernel`) `kmain` runs the in-kernel tests instead and exits QEMU with a
 //! pass/fail code. The physical frame allocator is built from the memory map (P1.2) and the
-//! bootloader's page tables are adopted for map/unmap/translate (P1.3); the kernel heap (P1.4)
-//! comes next. Cmdline words `page-fault-test` and `stack-overflow-test` exercise the page-fault
+//! bootloader's page tables are adopted for map/unmap/translate (P1.3), and a 1 MiB kernel heap
+//! backs `alloc` (P1.4). Cmdline words `page-fault-test` and `stack-overflow-test` exercise the page-fault
 //! handler and the guard-page → double-fault path.
 
 #![no_std]
@@ -21,6 +21,8 @@
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, test_runner(crate::test::runner))]
 #![cfg_attr(test, reexport_test_harness_main = "test_main")]
+
+extern crate alloc;
 
 use core::panic::PanicInfo;
 
@@ -141,6 +143,13 @@ extern "C" fn kmain() -> ! {
         kprintln!(
             "  paging: adopted CR3 tables; kernel dynamic region at {:#x}",
             mm::paging::KERNEL_DYNAMIC_BASE
+        );
+        let heap = mm::heap::init();
+        kprintln!(
+            "  heap: {} KiB at {:#x} ({} bytes used by the allocator itself)",
+            heap.size / 1024,
+            mm::heap::HEAP_BASE,
+            heap.used
         );
         kprintln!(
             "  frames: {} free of {} ({} MiB); bitmap {} KiB at {:#x}; self-check ok ({:#x})",
