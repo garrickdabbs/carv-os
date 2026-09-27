@@ -1,0 +1,27 @@
+name: Architecture decision proposal
+description: Propose a design change that needs an ADR (anything touching docs/abi.md after the freeze, a pillar design, or a key technical decision)
+title: "ADR: "
+labels: [kind:adr]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What problem or constraint forces a decision?
+    validations:
+      required: true
+  - type: textarea
+    id: decision
+    attributes:
+      label: Proposed decision
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: consequences
+    attributes:
+      label: Consequences
+      description: What becomes easier, what becomes harder, what has to change (ABI version bump? plan sections?).

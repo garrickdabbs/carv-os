@@ -334,7 +334,9 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
 
 ### 7.1 Repository governance
 - **Ruleset on `main`** (Settings → Rules): require a pull request, require the `all-green` status
-  check, require linear history, block force-pushes and deletion, require conversation resolution.
+  check, block force-pushes and deletion, require conversation resolution. *Not* linear history:
+  PRs merge with **merge commits** so stacked PRs retarget cleanly (learned in Phase 0; squashing a
+  stacked base makes the next PR conflict).
   Set **"do not allow bypass"** so even the maintainer merges through CI. Solo maintainer: approvals
   are *not* required (you'd be approving your own PRs), CI is the gate.
 - **Agent credentials.** Agents run on the maintainer's machine using the maintainer's `gh` login,
@@ -359,14 +361,17 @@ Triggers: `pull_request`, `push` to `main`, `merge_group`, `workflow_dispatch`.
 |---|---|---|
 | `lint` | `cargo fmt --check`; `cargo clippy --all-targets -D warnings` for host crates *and* `-p chisel --target x86_64-unknown-none`; `cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`; `cargo deny check` | 10 min |
 | `host-tests` | `cargo nextest run --workspace --locked` (layer 1), JUnit report uploaded and summarized in `$GITHUB_STEP_SUMMARY` | 15 min |
-| `kernel-tests` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask test --kernel` (layer 2) | 20 min |
-| `integration` | `cargo xtask test --integration` (layer 3); uploads `target/serial.log`, `qemu.log`, and the ISO on failure | 30 min |
+| `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask smoke --timeout 120` boots UEFI, BIOS and `panic-test` scenarios and checks the serial output; uploads `target/smoke/*.log` | 30 min |
+| `docs-gate` (PRs only) | `cargo xtask docs-gate --base origin/<base>`: code changes must carry `CHANGELOG.md`; `xtask` changes must update README/CLAUDE.md/PLAN; workflow changes must update PLAN §7/README; `docs/abi.md` changes need an ADR. Skipped when the PR body contains `docs-gate: skip` (with a reason). | 10 min |
+| `kernel-tests` (from P0.4) | `cargo xtask test --kernel` (layer 2, `isa-debug-exit`) | 20 min |
+| `integration` (from P0.4) | `cargo xtask test --integration` (layer 3); uploads `target/serial.log`, `qemu.log`, and the ISO on failure | 30 min |
 | `image` (push to `main` only) | `cargo xtask image --release`; uploads `carv-<sha>.iso` as a 7-day artifact so the maintainer can boot the latest `main` | 15 min |
-| `all-green` | `needs:` every job above, `if: always()`, fails if any dependency failed or was cancelled. **This is the only required status check**, so adding jobs never means touching the ruleset. | 1 min |
+| `all-green` | `needs:` every gate job, `if: always()`, fails unless each is `success` (`docs-gate` may be `skipped`). **This is the only required status check**, so adding jobs never means touching the ruleset. | 1 min |
 
 Details:
-- **Toolchain** comes from `rust-toolchain.toml` (`dtolnay/rust-toolchain` reads it), so CI and
-  laptops always agree. `--locked` everywhere; `Cargo.lock` is committed.
+- **Toolchain** comes from `rust-toolchain.toml`: CI runs plain `rustup toolchain install`, which
+  installs exactly the pinned nightly, components and target, so CI and laptops always agree and no
+  third-party toolchain action is needed. `--locked` everywhere; `Cargo.lock` is committed.
 - **Caching:** `Swatinem/rust-cache` keyed on the lockfile and toolchain; Limine binaries are fetched
   by **pinned release tag + SHA-256** that `xtask` verifies before use (never "latest").
 - **KVM on GitHub-hosted Linux runners** (nested virtualization is available on `ubuntu-latest`):
@@ -405,6 +410,11 @@ public repositories**. While the repo is private, Dependabot and `cargo deny`/`a
 the rest activates when the repo goes public (recommended once Phase 0 lands).
 
 ### 7.4 Test infrastructure on GitHub
+- **Documentation gate.** `cargo xtask docs-gate` compares the change set against the merge-base
+  and fails (exit 2) when code moved without its documentation (rules in the `docs-gate` row
+  above; the logic is a pure, unit-tested function in `xtask`). It runs twice: in CI on every PR,
+  and as a **Claude Code Stop hook** (`.claude/settings.json`) so an agent cannot end a task with
+  undocumented code. Escape hatch: `docs-gate: skip` plus a reason in the PR body.
 - **Per-PR:** layers 1–3 (§6) via `ci.yml`. Integration tests talk to the shell in `--json` mode so
   assertions are exact. Failures always upload the serial log, QEMU log, and the ISO that failed.
 - **Nightly — `.github/workflows/nightly.yml`** (`schedule: cron '0 6 * * *'` + `workflow_dispatch`):
@@ -631,7 +641,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | in progress | P0.1–P0.2 done; P0.3 in review; P0.5/P0.7/P0.8 are the GitHub infra tasks (§7) |
+| P0 Scaffolding & Boot | in progress | P0.1–P0.2 done; P0.3 in review; P0.5 (CI, deny, Dependabot, docs gate) and P0.6 (README, CHANGELOG, SECURITY; LICENSE + ADR-0001 pending) in review; P0.7 ruleset pending repo visibility; P0.8 not started |
 | P1 Kernel Core | not started | |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |

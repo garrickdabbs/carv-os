@@ -1,0 +1,150 @@
+# CarvOS CI — every pull request must turn `all-green` green before it can merge.
+# Design: docs/PLAN.md §7.2. Every action is pinned to a full commit SHA (Dependabot bumps them).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # No global RUSTFLAGS: the env var would override the kernel's per-target flags in .cargo/config.toml.
+
+jobs:
+  lint:
+    name: lint (fmt, clippy, doc, cargo-deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install the pinned toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy (host)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: clippy (kernel)
+        run: cargo clippy -p chisel --target x86_64-unknown-none --locked -- -D warnings
+      - name: rustdoc
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: |
+          cargo doc --no-deps --workspace --locked
+          cargo doc --no-deps -p chisel --target x86_64-unknown-none --locked
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features
+
+  host-tests:
+    name: host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install the pinned toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo test --workspace --locked
+
+  boot-smoke:
+    name: boot smoke (QEMU, UEFI + BIOS + panic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install the pinned toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: install QEMU, OVMF, xorriso
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf xorriso
+      - name: enable KVM for the runner user
+        # GitHub's Linux runners expose nested virtualisation; xtask falls back to TCG if this fails.
+        continue-on-error: true
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm || true
+      - name: smoke boots
+        run: cargo xtask smoke --timeout 120
+      - name: upload serial logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-serial-logs
+          path: |
+            target/smoke/*.log
+            target/qemu.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  docs-gate:
+    name: docs gate
+    if: "github.event_name == 'pull_request' && !contains(github.event.pull_request.body, 'docs-gate: skip')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: install the pinned toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: code changes must carry documentation changes
+        run: cargo xtask docs-gate --base "origin/${{ github.base_ref }}"
+
+  image:
+    name: bootable ISO artifact
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: install the pinned toolchain from rust-toolchain.toml
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xorriso
+      - run: cargo xtask image --release
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: carv-os-${{ github.sha }}
+          path: target/carv-os.iso
+          retention-days: 7
+
+  # The single required status check. Adding a job above never means touching the ruleset.
+  all-green:
+    name: all-green
+    if: always()
+    needs: [lint, host-tests, boot-smoke, docs-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: verify every gate passed or was legitimately skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          # docs-gate may be skipped (push to main, or explicit 'docs-gate: skip'); nothing else may.
+          echo "$RESULTS" | jq -e '
+            (.lint.result == "success") and
+            (.["host-tests"].result == "success") and
+            (.["boot-smoke"].result == "success") and
+            (.["docs-gate"].result == "success" or .["docs-gate"].result == "skipped")
+          ' > /dev/null

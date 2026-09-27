@@ -8,6 +8,10 @@
 //! - `run [--release] [--bios] [--debug] [--timeout SECS] [--cmdline STR]`: boot the image in QEMU
 //!   with serial on stdio. Uses KVM when `/dev/kvm` is usable, TCG otherwise.
 //!
+//! - `smoke [--release] [--timeout SECS]`: boot UEFI, BIOS and panic-test scenarios in QEMU and check
+//!   the serial output (CI's boot gate until `test` arrives in P0.4).
+//! - `docs-gate [--base REF]`: fail when code changed without matching documentation changes.
+//!
 //! `test` arrives in P0.4.
 
 use std::env;
@@ -99,6 +103,8 @@ fn main() -> ExitCode {
         Some("limine") => ensure_limine().map(|_| ()),
         Some("image") => image(&args[1..]).map(|_| ()),
         Some("run") => run(&args[1..]),
+        Some("smoke") => smoke(&args[1..]),
+        Some("docs-gate") => docs_gate(&args[1..]),
         Some("help") | None => {
             print_help();
             Ok(())
@@ -133,6 +139,13 @@ fn print_help() {
     println!("    --debug     log interrupts and CPU resets to target/qemu.log");
     println!("    --timeout   kill QEMU after SECS seconds and exit {EXIT_TIMEOUT}");
     println!("    --cmdline   kernel command line passed through Limine (e.g. panic-test)");
+    println!("  smoke [--release] [--timeout SECS]");
+    println!(
+        "                                   Boot UEFI, BIOS and panic scenarios; check serial output"
+    );
+    println!(
+        "  docs-gate [--base REF]           Fail if code changed without documentation (default base: main)"
+    );
 }
 
 // ---------------------------------------------------------------- build
@@ -529,6 +542,284 @@ fn shell_words(cmd: &Command) -> String {
     s
 }
 
+// ---------------------------------------------------------------- smoke
+
+/// One boot scenario checked by `smoke`.
+struct Scenario {
+    name: &'static str,
+    bios: bool,
+    cmdline: &'static str,
+    /// Every entry must appear on the serial console for the scenario to pass.
+    expect: &'static [&'static str],
+}
+
+const SMOKE_SCENARIOS: &[Scenario] = &[
+    Scenario {
+        name: "uefi",
+        bios: false,
+        cmdline: "",
+        expect: &["CarvOS chisel v", "bootloader: Limine", "halting"],
+    },
+    Scenario {
+        name: "bios",
+        bios: true,
+        cmdline: "",
+        expect: &["CarvOS chisel v", "bootloader: Limine", "halting"],
+    },
+    Scenario {
+        name: "panic",
+        bios: false,
+        cmdline: "panic-test",
+        expect: &["CarvOS chisel v", "chisel: PANIC at "],
+    },
+];
+
+/// Boots every [`SMOKE_SCENARIOS`] entry in QEMU and checks the serial output. Each run stops as
+/// soon as all expected strings have appeared, so a passing suite takes seconds. Serial logs are
+/// written to `target/smoke/<name>.log` for CI to upload.
+fn smoke(args: &[String]) -> Result<(), String> {
+    let mut release = false;
+    let mut timeout = Duration::from_secs(60);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--release" => release = true,
+            "--timeout" => {
+                let secs = it
+                    .next()
+                    .ok_or("--timeout needs a value in seconds")?
+                    .parse::<u64>()
+                    .map_err(|e| format!("bad --timeout value: {e}"))?;
+                timeout = Duration::from_secs(secs);
+            }
+            other => return Err(format!("unknown smoke option `{other}`")),
+        }
+    }
+
+    let log_dir = target_dir().join("smoke");
+    fs::create_dir_all(&log_dir).map_err(|e| format!("creating {}: {e}", log_dir.display()))?;
+
+    let mut failures = Vec::new();
+    for sc in SMOKE_SCENARIOS {
+        let iso = build_image(release, sc.cmdline)?;
+        let opts = RunOpts {
+            release,
+            bios: sc.bios,
+            debug: false,
+            timeout: Some(timeout),
+            cmdline: sc.cmdline.to_string(),
+        };
+        let mut cmd = qemu_command(&iso, &opts)?;
+        let started = Instant::now();
+        let (output, satisfied) = run_qemu_capture(&mut cmd, timeout, sc.expect)?;
+        let log = log_dir.join(format!("{}.log", sc.name));
+        fs::write(&log, &output).map_err(|e| format!("writing {}: {e}", log.display()))?;
+        if satisfied {
+            println!(
+                "smoke: {:<6} PASS  ({:.1}s, log: {})",
+                sc.name,
+                started.elapsed().as_secs_f32(),
+                log.display()
+            );
+        } else {
+            let missing: Vec<&str> = sc
+                .expect
+                .iter()
+                .copied()
+                .filter(|e| !output.contains(e))
+                .collect();
+            eprintln!(
+                "smoke: {:<6} FAIL  missing {:?} after {:.1}s (log: {})",
+                sc.name,
+                missing,
+                started.elapsed().as_secs_f32(),
+                log.display()
+            );
+            failures.push(sc.name);
+        }
+    }
+    if failures.is_empty() {
+        println!("smoke: all {} scenarios passed", SMOKE_SCENARIOS.len());
+        Ok(())
+    } else {
+        Err(format!(
+            "smoke: {} of {} scenarios failed: {:?}",
+            failures.len(),
+            SMOKE_SCENARIOS.len(),
+            failures
+        ))
+    }
+}
+
+/// Runs QEMU with its stdout (the serial console) captured. Returns once every expected string
+/// has appeared, QEMU exits, or `timeout` elapses; QEMU is killed in every case. Yields the
+/// captured text and whether all expectations were met.
+fn run_qemu_capture(
+    cmd: &mut Command,
+    timeout: Duration,
+    expect: &[&str],
+) -> Result<(String, bool), String> {
+    use std::io::Read;
+    use std::sync::mpsc;
+
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to start qemu-system-x86_64 (is it installed?): {e}"))?;
+    let mut stdout = child.stdout.take().expect("stdout was requested as piped");
+
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match stdout.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    let start = Instant::now();
+    let mut out: Vec<u8> = Vec::new();
+    let all_seen = |bytes: &[u8]| {
+        let text = String::from_utf8_lossy(bytes);
+        expect.iter().all(|e| text.contains(e))
+    };
+    loop {
+        let remaining = timeout.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        match rx.recv_timeout(remaining.min(Duration::from_millis(200))) {
+            Ok(chunk) => {
+                out.extend_from_slice(&chunk);
+                if all_seen(&out) {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    break; // QEMU exited on its own (e.g. isa-debug-exit, from P0.4 on)
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    while let Ok(chunk) = rx.try_recv() {
+        out.extend_from_slice(&chunk);
+    }
+    let satisfied = all_seen(&out);
+    Ok((String::from_utf8_lossy(&out).into_owned(), satisfied))
+}
+
+// ---------------------------------------------------------------- docs-gate
+
+/// Paths whose change means "code changed" for the documentation gate.
+const CODE_PREFIXES: &[&str] = &["kernel/", "crates/", "services/", "userland/", "xtask/"];
+
+/// Exit status when the gate finds violations (Claude Code treats hook exit 2 as "block").
+const EXIT_DOCS_GATE: i32 = 2;
+
+/// Compares the working tree against the merge-base with `--base` (default `main`) and fails if
+/// code changed without the documentation that must travel with it. Runs in CI on every PR and
+/// as a Claude Code stop hook (`.claude/settings.json`).
+fn docs_gate(args: &[String]) -> Result<(), String> {
+    let mut base = String::from("main");
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--base" => base = it.next().ok_or("--base needs a git ref")?.clone(),
+            other => return Err(format!("unknown docs-gate option `{other}`")),
+        }
+    }
+
+    let root = workspace_root();
+    let merge_base = git(&root, &["merge-base", &base, "HEAD"])?;
+    let merge_base = merge_base.trim();
+    // Committed and uncommitted changes since the merge-base, plus untracked files.
+    let mut changed: Vec<String> = git(&root, &["diff", "--name-only", merge_base])?
+        .lines()
+        .map(str::to_string)
+        .collect();
+    changed.extend(
+        git(&root, &["ls-files", "--others", "--exclude-standard"])?
+            .lines()
+            .map(str::to_string),
+    );
+    changed.sort();
+    changed.dedup();
+
+    let violations = docs_gate_violations(&changed);
+    if violations.is_empty() {
+        println!(
+            "docs-gate: OK ({} changed file(s) since merge-base with {base})",
+            changed.len()
+        );
+        return Ok(());
+    }
+    for v in &violations {
+        eprintln!("docs-gate: {v}");
+    }
+    eprintln!(
+        "docs-gate: documentation must travel with code. Add the missing docs; if a change truly needs none, put `docs-gate: skip` and the reason in the PR body."
+    );
+    std::process::exit(EXIT_DOCS_GATE);
+}
+
+/// The gate's rules, kept pure so they are unit-testable. Returns one message per violation.
+fn docs_gate_violations(changed: &[String]) -> Vec<String> {
+    let has = |p: &str| changed.iter().any(|c| c == p);
+    let any_under = |prefixes: &[&str]| {
+        changed
+            .iter()
+            .any(|c| prefixes.iter().any(|p| c.starts_with(p)))
+    };
+    let mut v = Vec::new();
+
+    if (any_under(CODE_PREFIXES) || has("Cargo.toml")) && !has("CHANGELOG.md") {
+        v.push(
+            "code changed (kernel/, crates/, services/, userland/, xtask/ or Cargo.toml) but CHANGELOG.md was not updated; add a line under Unreleased".to_string(),
+        );
+    }
+    if any_under(&["xtask/src/"]) && !(has("README.md") || has("CLAUDE.md") || has("docs/PLAN.md"))
+    {
+        v.push(
+            "xtask/src/ changed but README.md, CLAUDE.md and docs/PLAN.md were not; the command reference must match the tool".to_string(),
+        );
+    }
+    if any_under(&[".github/workflows/"]) && !(has("docs/PLAN.md") || has("README.md")) {
+        v.push(
+            ".github/workflows/ changed but neither docs/PLAN.md (section 7) nor README.md was updated".to_string(),
+        );
+    }
+    if has("docs/abi.md") && !any_under(&["docs/adr/"]) {
+        v.push("docs/abi.md changed without a new ADR in docs/adr/".to_string());
+    }
+    v
+}
+
+fn git(root: &Path, args: &[&str]) -> Result<String, String> {
+    let out = Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 // ---------------------------------------------------------------- shared
 
 fn workspace_root() -> PathBuf {
@@ -610,6 +901,33 @@ mod tests {
         assert!(conf.contains("serial: yes"));
         assert!(!conf.contains("cmdline:"));
         assert!(limine_conf("panic-test").contains("    cmdline: panic-test\n"));
+    }
+
+    #[test]
+    fn docs_gate_rules() {
+        let v = |files: &[&str]| {
+            docs_gate_violations(&files.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(
+            v(&["kernel/src/main.rs"]).len() == 1,
+            "code without changelog"
+        );
+        assert!(v(&["kernel/src/main.rs", "CHANGELOG.md"]).is_empty());
+        assert!(v(&["Cargo.toml"]).len() == 1);
+        assert!(
+            v(&["xtask/src/main.rs", "CHANGELOG.md"]).len() == 1,
+            "xtask without README"
+        );
+        assert!(v(&["xtask/src/main.rs", "CHANGELOG.md", "README.md"]).is_empty());
+        assert!(v(&[".github/workflows/ci.yml"]).len() == 1);
+        assert!(v(&[".github/workflows/ci.yml", "docs/PLAN.md"]).is_empty());
+        assert!(v(&["docs/abi.md"]).len() == 1);
+        assert!(v(&["docs/abi.md", "docs/adr/0002-abi-v1.md"]).is_empty());
+        assert!(
+            v(&["README.md", "docs/PLAN.md"]).is_empty(),
+            "docs-only change"
+        );
+        assert!(v(&[]).is_empty());
     }
 
     #[test]

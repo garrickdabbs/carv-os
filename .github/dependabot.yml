@@ -1,0 +1,26 @@
+# Weekly dependency updates, grouped so a Monday brings one PR per ecosystem, not ten.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      rust-minor-and-patch:
+        update-types: [minor, patch]
+    labels: [area:infra, kind:deps]
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: [area:infra, kind:deps]
+    commit-message:
+      prefix: "ci"
