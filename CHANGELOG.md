@@ -11,7 +11,9 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   mapped uncached at `paging::KERNEL_MMIO_BASE` (new `paging::map_mmio`; Limine's direct map does not cover device
   memory) and enabled (`arch::x86_64::apic`), its timer is calibrated against PIT channel 2
   (`arch::x86_64::pit::busy_wait_ms`) and runs periodic at 1 kHz on vector 32 with a spurious-vector handler;
-  boot enables interrupts, prints the tick count after 100 ms and the UEFI/BIOS smoke scenarios expect it;
+  the PICs' 16 vectors (`0xE0..=0xEF`) get no-op handlers so a spurious IRQ7/IRQ15 is swallowed; boot enables
+  interrupts, requires 90–110 ticks over a PIT-timed 100 ms (panics otherwise) and prints the success line the
+  UEFI/BIOS smoke scenarios expect;
   an in-kernel test counts 100 ± 10 ticks over a PIT-timed 100 ms wait.
 - P1.4: kernel heap — `kernel::mm::heap` maps 1 MiB of fresh frames at `KERNEL_DYNAMIC_BASE + 256 MiB` and
   installs `linked_list_allocator` (no default features) as the `#[global_allocator]` behind the kernel spin lock

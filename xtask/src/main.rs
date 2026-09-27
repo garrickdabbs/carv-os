@@ -744,7 +744,7 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
         expect: &[
             "CarvOS chisel v",
             "bootloader: Limine",
-            "LAPIC timer ticking",
+            "LAPIC timer ticking at 1 kHz",
             "halting",
         ],
     },
@@ -755,7 +755,7 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
         expect: &[
             "CarvOS chisel v",
             "bootloader: Limine",
-            "LAPIC timer ticking",
+            "LAPIC timer ticking at 1 kHz",
             "halting",
         ],
     },

@@ -5,7 +5,8 @@
 //! readable message on the serial console instead of a silent triple fault.
 //! The double-fault handler runs on its own IST stack (see `gdt.rs`) and is therefore reachable
 //! even when the faulting code's stack is unusable. Vector 32 is the local APIC timer and 0xFF its
-//! spurious vector (P1.5); device IRQs follow with the I/O APIC in P2.8.
+//! spurious vector; the 16 vectors the masked legacy PICs are remapped to get no-op handlers so a
+//! spurious IRQ7/IRQ15 is swallowed (P1.5). Device IRQs follow with the I/O APIC in P2.8.
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -14,6 +15,7 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, Pag
 
 use super::apic;
 use super::gdt::DOUBLE_FAULT_IST_INDEX;
+use super::pic::PIC_VECTOR_BASE;
 use crate::sync::StaticCell;
 use crate::{kprintln, serial};
 
@@ -63,6 +65,9 @@ pub fn init() {
 
         idt[apic::TIMER_VECTOR].set_handler_fn(apic::timer_interrupt);
         idt[apic::SPURIOUS_VECTOR].set_handler_fn(apic::spurious_interrupt);
+        for v in PIC_VECTOR_BASE..=PIC_VECTOR_BASE + 15 {
+            idt[v].set_handler_fn(legacy_pic_irq);
+        }
 
         IDT.get().load();
     }
@@ -98,6 +103,10 @@ extern "x86-interrupt" fn page_fault(frame: InterruptStackFrame, error_code: Pag
         frame.instruction_pointer.as_u64()
     );
 }
+
+/// A vector of the masked legacy PICs: only a spurious IRQ7/IRQ15 can get here, and a spurious
+/// IRQ must not be acknowledged, so there is nothing to do.
+extern "x86-interrupt" fn legacy_pic_irq(_frame: InterruptStackFrame) {}
 
 /// Exceptions without an error code: report and panic.
 macro_rules! fatal {

@@ -198,13 +198,18 @@ extern "C" fn kmain() -> ! {
         force_oom();
     }
 
-    // With every table in place, take interrupts and prove the timer runs before idling.
+    // With every table in place, take interrupts and prove the timer runs at the right rate
+    // before idling; the smoke scenarios look for the success line, which only a 1 kHz timer
+    // produces (a dead or misprogrammed timer panics here instead).
     arch::x86_64::enable_interrupts();
+    let before = arch::x86_64::apic::ticks();
     arch::x86_64::pit::busy_wait_ms(100);
-    kprintln!(
-        "  timer: {} ticks in 100 ms; LAPIC timer ticking",
-        arch::x86_64::apic::ticks()
+    let ticks = arch::x86_64::apic::ticks() - before;
+    assert!(
+        (90..=110).contains(&ticks),
+        "LAPIC timer rate wrong: {ticks} ticks in 100 ms, expected 1 kHz"
     );
+    kprintln!("  timer: LAPIC timer ticking at 1 kHz ({ticks} ticks in 100 ms)");
     kprintln!("chisel: nothing more to do yet; halting");
     halt_forever()
 }
