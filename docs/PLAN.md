@@ -365,14 +365,15 @@ history. All trigger on `pull_request`, `push` to `main`, `merge_group` and `wor
 | **Build** `build.yml` | `build` | `cargo fmt --check`; clippy `-D warnings` for host crates *and* `-p chisel --target x86_64-unknown-none`; `cargo xtask build` debug and `--release` (higher-half layout verified); `cargo test --workspace --locked`; `cargo xtask image --release`; ISO uploaded as a 7-day artifact on `main` | 20 min |
 | **CI** `ci.yml` | `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask test --timeout 120`: host unit tests, the in-kernel test kernel booted in QEMU (`isa-debug-exit` 33/35), and the UEFI/BIOS/`panic-test` smoke scenarios with serial output asserted; uploads `target/test/*.log` and `target/smoke/*.log`. Job name stays `boot-smoke` (required check) | 30 min |
 | **Security** `security.yml` | `security` | `cargo deny check` (advisories, licenses, bans, sources); `cargo audit --deny warnings` with a fresh RustSec DB; clippy with only `undocumented_unsafe_blocks` as an error; unsafe inventory in the job summary; every `uses:` pinned to a 40-hex SHA; no `write-all` permissions. Also runs **weekly** so new advisories surface without a code change | 15 min |
-| **Docs** `docs.yml` | `docs` | `cargo xtask docs-gate --base origin/<base>` (PRs; skipped for Dependabot and with the documented skip marker); rustdoc with `RUSTDOCFLAGS=-D warnings` (crate roots deny `missing_docs`); `lychee --offline` checks every local Markdown link and anchor | 15 min |
+| **Docs** `docs.yml` | `docs` | `docs-gate` run from the **base branch's** xtask against the PR checkout (a PR cannot weaken the gate it is judged by); requires *new content under Unreleased* in CHANGELOG.md, a *new* ADR file for `docs/abi.md`, and a skip marker only with a ≥ 20-character reason (PRs; Dependabot exempt); rustdoc with `RUSTDOCFLAGS=-D warnings` (crate roots deny `missing_docs`); `lychee --offline` checks every local Markdown link and anchor | 15 min |
 | **Performance** `perf.yml` | `perf` | `cargo xtask perf --runs 5`: release-kernel loaded size, ISO size, boot-to-banner and banner-to-halt (median, KVM) against budgets in `xtask`; over budget fails; report to the job summary | 30 min |
 | **CodeQL** `codeql.yml` | `codeql (rust)`, `codeql (actions)` | GitHub code scanning of the Rust sources and of the workflow files; PRs, `main`, weekly. Advisory (not a required check) | 45 min |
 | **Scorecard** `scorecard.yml` | `scorecard` | OpenSSF Scorecard on `main` and weekly; publishes results for the README badge and to code scanning. Advisory | 15 min |
 
-The docs-gate rules: code changes must carry `CHANGELOG.md`; `xtask` changes must update
-README/CLAUDE.md/PLAN; workflow changes must update PLAN §7/README; `docs/abi.md` changes need an
-ADR. Skipped for Dependabot PRs (the bump PR is its own record).
+The docs-gate rules: code changes must add content under `## [Unreleased]` in `CHANGELOG.md`; `xtask`
+changes must update README/CLAUDE.md/PLAN; workflow changes must update PLAN §7/README; `docs/abi.md`
+changes need a *new* ADR file. Skipped for Dependabot PRs (the bump PR is its own record) or with
+`docs-gate: skip — <reason ≥ 20 chars>` in the PR body.
 
 Details:
 - **Toolchain** comes from `rust-toolchain.toml`: CI runs plain `rustup toolchain install`, which
@@ -402,7 +403,7 @@ Details:
 | Control | Tool / setting | Where |
 |---|---|---|
 | Dependency updates | **Dependabot** for `cargo` and `github-actions`, weekly, grouped minor/patch | `.github/dependabot.yml` |
-| Vulnerable / unlicensed / duplicate deps | **`cargo deny`** (`advisories`, `licenses` allow-list: MIT, Apache-2.0, BSD-2/3, ISC, Zlib, Unicode-3.0; `bans` on duplicate versions; `sources` = crates.io only) | `deny.toml`, `lint` job |
+| Vulnerable / unlicensed / duplicate deps | **`cargo deny`** (`advisories`, `licenses` allow-list: MIT, Apache-2.0, BSD-2/3, ISC, Zlib, Unicode-3.0; `bans`: duplicate versions are an *error*; `sources` = crates.io only) | `deny.toml`, `security` job |
 | Fresh advisories without a code change | **`cargo audit`** on the nightly schedule (advisory DB moves even when code doesn't) | `nightly.yml` |
 | Unsafe-code discipline (mechanizes the CLAUDE.md rule) — *live* | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(unsafe_op_in_unsafe_fn)]` + `#![deny(missing_docs)]` in every crate root; `cargo geiger` unsafe-count report posted to the PR summary; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `carv-rt` | crate roots, `lint` job |
 | Undefined behaviour in host-testable code | **Miri**: `cargo miri test` on the pure crates (`carv-caps`, `carv-value`, `carv-vstore-core`, `carv-budget`) | `nightly.yml` |
@@ -434,9 +435,9 @@ protection, Scorecard and rulesets are all available at no cost.
     the loop checks `cargo xtask smoke`'s exit code directly, never through `grep`
   - On failure the workflow creates or updates a single pinned issue **"Nightly is failing"**
     with links to the run, and closes it when green again.
-- **Test reporting:** `cargo-nextest` emits JUnit for host tests; the QEMU harness emits the same
-  format for kernel and integration tests; both are rendered into the job summary and kept as
-  artifacts for 30 days so regressions can be diffed.
+- **Test reporting (deferred):** host tests run with plain `cargo test` today; `cargo-nextest` with
+  JUnit output for host, kernel and integration tests, rendered into the job summary and kept as
+  artifacts for 30 days, is planned for P9.6.
 - **Coverage:** `cargo llvm-cov` on the pure crates only (kernel coverage isn't practical); reported
   in the summary, no hard threshold, trend tracked in the nightly issue.
 - **Hermetic tests:** integration tests that need internet (`P8.4` DNS) are marked
@@ -458,7 +459,8 @@ protection, Scorecard and rulesets are all available at no cost.
   1. `release-check`, then a **reproducible** `cargo xtask image --release` — `xtask` sets
      `SOURCE_DATE_EPOCH` to the commit time for xorriso, and the workflow builds twice — the second
      time from another directory with a fresh `CARGO_HOME` — and requires identical SHA-256s
-  2. run the **full test suite against the exact release artifacts** (not a rebuild)
+  2. run the full test suite (`cargo xtask test --release`) at the tagged commit; the in-kernel tests
+     necessarily use a separate test kernel, so "against the exact artifact" means step 3
   3. boot-smoke: `cargo xtask smoke --iso <release iso>` boots the exact artifact under UEFI and BIOS
      and requires the banner (and, from Phase 6, a shell prompt)
   4. produce artifacts: `carv-os-v0.y.z-x86_64.iso`, `carv-os-v0.y.z-data.img.zst`,
@@ -497,7 +499,7 @@ phase's interfaces are frozen.
 | P0.2 | `xtask`: build, fetch/pin Limine, make ISO, run QEMU, detect KVM | `cargo xtask run` boots to the Limine menu, then the kernel |
 | P0.3 | Serial driver (16550) + `kprintln!` macro + panic handler printing to serial | Serial shows `CarvOS chisel v0.0.1 booting` |
 | P0.4 | `isa-debug-exit` + in-kernel test framework | `cargo xtask test` runs a trivial test, QEMU exits with the pass code — **done 2026-09-27**: 5 `#[test_case]`s, exit 33/35 mapped by `xtask`, `test` runs host + kernel + smoke layers |
-| P0.5 | `ci.yml` per §7.2: lint (fmt, clippy both targets, doc, `cargo deny`), host tests (nextest + JUnit), kernel tests and integration tests in QEMU with KVM enabled, `all-green` gate; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows a single required `all-green` check; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR |
+| P0.5 | `ci.yml` per §7.2: lint (fmt, clippy both targets, doc, `cargo deny`), host tests (`cargo test`; nextest + JUnit deferred to P9.6), kernel tests and integration tests in QEMU with KVM enabled, `all-green` gate; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows a single required `all-green` check; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR |
 | P0.6 | `README.md` (build, run, verify-a-release sections), `docs/adr/0001-microkernel-rust-x86_64.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE` | Files exist; README badges for CI and Scorecard render — **done 2026-09-27** |
 | P0.7 | Repo governance per §7.1: `main` ruleset (PR + `all-green` required, linear history, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board, fine-grained PAT for agents | Direct push to `main` is rejected; a PR without green CI can't merge; agent token can't merge |
 | P0.8 | `release.yml` per §7.5 + `cargo xtask release-check`: reproducible ISO, tests against artifacts, boot-smoke, SHA256SUMS, SBOM, Sigstore signature, build provenance attestation, GitHub Release with generated notes. `nightly.yml` (daily tests, stress, perf, audit, toolchain drift, rolling `nightly` pre-release) | Tag `v0.1.0` produces a release whose ISO boots to the banner and passes `gh attestation verify`; two runs produce identical ISO hashes — **pipeline landed 2026-09-27; validated with `v0.1.0-rc.1`, then `v0.1.0`** |
@@ -507,7 +509,7 @@ phase's interfaces are frozen.
 |---|---|---|
 | P1.1 | GDT + TSS (with IST stacks for double fault), IDT, exception handlers | Test triggers `int3`, handler runs; forced stack overflow → double-fault message, not triple fault — **done 2026-09-27** (`x86_64` crate; `#BP` test; `double-fault-test` smoke scenario forces an unusable stack, since a recursion overflow is only deterministic once P1.3 adds a kernel-stack guard page — that test is added then) |
 | P1.2 | Physical frame allocator from the Limine memory map (bitmap or buddy) | Kernel test: allocate/free 10k frames, no duplicates, count restored — **done 2026-09-27** (`crates/carv-frames` bitmap core, host-tested; kernel wrapper carves the bitmap from usable RAM via the HHDM) |
-| P1.3 | Paging: kernel mapper using the HHDM offset, map/unmap/translate | Test maps a fresh page, writes, reads back, unmaps → page fault handler catches access — **done 2026-09-27** (`kernel::mm::paging`; `pfault`/`sovflw` smoke scenarios) |
+| P1.3 | Paging: kernel mapper using the HHDM offset, map/unmap/translate | Test maps a fresh page, writes, reads back, unmaps → page fault handler catches access — **done 2026-09-27** (`x86_64::OffsetPageTable` over Limine's CR3 tables; dynamic region at `0xffff9000_00000000`; `pfault` smoke scenario; the deferred recursion-overflow → `#DF` test now runs via a guard-paged stack, `sovflw`) |
 | P1.4 | Kernel heap (`linked_list_allocator` or custom slab) + `alloc` | `Vec`/`Box`/`BTreeMap` work in kernel tests |
 | P1.5 | Local APIC + timer (calibrated against HPET/PIT), disable legacy PIC | Timer ticks at 1 kHz; test counts ticks over a busy wait |
 | P1.6 | ACPI table parsing (`acpi` crate) for MADT/HPET/MCFG | Boot log lists APIC ID(s) and HPET address |
@@ -659,7 +661,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | Phase | Status | Notes |
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0` |
-| P1 Kernel Core | in progress | P1.1–P1.2 done 2026-09-27 |
+| P1 Kernel Core | in progress | P1.1–P1.3 done 2026-09-27 |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |
 | P4 Drivers | not started | |

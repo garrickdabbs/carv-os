@@ -1,3 +1,4 @@
-//! Memory management: physical frames now; paging (P1.3) and the kernel heap (P1.4) next.
+//! Memory management: physical frames and the kernel page-table mapper; the kernel heap (P1.4) is next.
 
 pub mod frame;
+pub mod paging;

@@ -128,8 +128,8 @@ fn frame_allocator_ten_thousand_frames_unique_and_restored() {
     let scratch = unsafe { FRAME_SCRATCH.get_mut() };
     for slot in scratch.iter_mut() {
         let f = frame::allocate().expect("frame available");
-        assert_ne!(f.0.as_u64(), 0, "frame 0 must never be handed out");
-        assert_eq!(f.0.as_u64() % 4096, 0);
+        assert_ne!(f.start().as_u64(), 0, "frame 0 must never be handed out");
+        assert_eq!(f.start().as_u64() % 4096, 0);
         *slot = f.index() as u32;
     }
     assert_eq!(frame::stats().0, free_before - 10_000);
@@ -148,15 +148,98 @@ fn frame_allocator_ten_thousand_frames_unique_and_restored() {
     // Free every other one first, then the rest: the count must come back exactly.
     for (k, &idx) in scratch.iter().enumerate() {
         if k % 2 == 0 {
-            frame::free(frame::Frame(x86_64::PhysAddr::new(idx as u64 * 4096)));
+            frame::free(frame::Frame::from_index(idx as usize));
         }
     }
     for (k, &idx) in scratch.iter().enumerate() {
         if k % 2 == 1 {
-            frame::free(frame::Frame(x86_64::PhysAddr::new(idx as u64 * 4096)));
+            frame::free(frame::Frame::from_index(idx as usize));
         }
     }
     assert_eq!(frame::stats(), (free_before, total));
+}
+
+#[test_case]
+fn paging_map_write_translate_unmap() {
+    use crate::mm::{frame, paging};
+    use x86_64::VirtAddr;
+    use x86_64::structures::paging::Page;
+
+    let addr = VirtAddr::new(paging::KERNEL_DYNAMIC_BASE + 0x40_0000);
+    let page = Page::containing_address(addr);
+    assert_eq!(
+        paging::translate(addr),
+        None,
+        "test page must start unmapped"
+    );
+
+    let f = frame::allocate().expect("frame");
+    paging::map(page, f, paging::KERNEL_DATA).expect("map");
+    assert_eq!(
+        paging::translate(addr),
+        Some(f.start()),
+        "translate must return the mapped frame"
+    );
+
+    // Write through the new mapping, read back through the HHDM alias of the same frame.
+    let hhdm = crate::HHDM.response().unwrap().offset;
+    // SAFETY: `addr` was just mapped to `f` (writable, kernel-only) and the HHDM maps `f` too;
+    // both pointers are valid, aligned and refer to memory nobody else uses.
+    unsafe {
+        core::ptr::write_volatile(addr.as_mut_ptr::<u64>(), 0x5EED_F00D_0000_1337);
+        let via_hhdm = core::ptr::read_volatile((hhdm + f.start().as_u64()) as *const u64);
+        assert_eq!(via_hhdm, 0x5EED_F00D_0000_1337);
+    }
+
+    let unmapped = paging::unmap(page).expect("unmap");
+    assert_eq!(unmapped, f);
+    assert_eq!(
+        paging::translate(addr),
+        None,
+        "page must be gone after unmap"
+    );
+    frame::free(f);
+}
+
+#[test_case]
+fn paging_refuses_pages_outside_the_dynamic_region() {
+    use crate::mm::{frame, paging};
+    use x86_64::VirtAddr;
+    use x86_64::structures::paging::Page;
+    // The kernel image and the HHDM are off limits to the safe API.
+    let kernel_page = Page::containing_address(VirtAddr::new(0xffff_ffff_8000_0000));
+    let f = frame::allocate().unwrap();
+    match paging::map(kernel_page, f, paging::KERNEL_DATA) {
+        Err((paging::MapError::OutsideDynamicRegion, returned)) => {
+            assert_eq!(returned, f, "the frame must come back to its owner");
+            frame::free(returned);
+        }
+        other => panic!("expected OutsideDynamicRegion, got {other:?}"),
+    }
+    assert!(matches!(
+        paging::unmap(kernel_page),
+        Err(paging::UnmapFail::OutsideDynamicRegion)
+    ));
+    // A frame the allocator never handed out (frame 0 is reserved) is refused as not owned.
+    let reserved = crate::mm::frame::Frame::from_index(0);
+    let page0 = Page::containing_address(VirtAddr::new(paging::KERNEL_DYNAMIC_BASE + 0x60_0000));
+    assert!(matches!(
+        paging::map(page0, reserved, paging::KERNEL_DATA),
+        Err((paging::MapError::FrameNotOwned, _))
+    ));
+    // Mapping the same dynamic page twice fails and still returns the frame.
+    let addr = VirtAddr::new(paging::KERNEL_DYNAMIC_BASE + 0x50_0000);
+    let page = Page::containing_address(addr);
+    let a = frame::allocate().unwrap();
+    let b = frame::allocate().unwrap();
+    paging::map(page, a, paging::KERNEL_DATA)
+        .map_err(|(e, _)| e)
+        .unwrap();
+    match paging::map(page, b, paging::KERNEL_DATA) {
+        Err((paging::MapError::Mapper(_), returned)) => frame::free(returned),
+        other => panic!("expected a mapper error, got {other:?}"),
+    }
+    frame::free(paging::unmap(page).unwrap());
 }
 
 #[test_case]
