@@ -30,3 +30,5 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - P0.4: in-kernel test framework (`kernel/src/test.rs`: `#[test_case]` runner, `isa-debug-exit` pass/fail codes)
   and `cargo xtask test` — host unit tests, the test kernel booted in QEMU, and the boot smoke scenarios in one
   command; CI's `boot-smoke` job now runs it. Host-side `cargo test`/`clippy` use `--workspace --exclude chisel`.
+- xtask: cargo's JSON messages are parsed with `serde_json` (paths with quotes or backslashes now survive; #13, #14);
+  xorriso and `limine bios-install` output is shown on failure and with `CARV_XTASK_VERBOSE=1` (#15).

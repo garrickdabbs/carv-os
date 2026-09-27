@@ -103,6 +103,8 @@ Notes:
   `CARV_OVMF_CODE` and `CARV_OVMF_VARS`, or use `--bios`.
 - **Limine** (v11.4.1) is downloaded once from a pinned commit; every file's SHA-256 is checked
   against the values in `xtask/src/main.rs` before it is used. A mismatch fails the build.
+- `xtask` keeps external tools (xorriso, `limine bios-install`) quiet on success and prints their
+  output on failure; set `CARV_XTASK_VERBOSE=1` to always see it.
 - Plain `cargo build` / `cargo test` at the workspace root build only host code (`xtask`, and later
   the `crates/*` libraries); the kernel is built only through `xtask`.
 

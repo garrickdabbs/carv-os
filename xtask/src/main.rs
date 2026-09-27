@@ -344,7 +344,8 @@ fn assemble_iso(
     copy(&limine.join("BOOTX64.EFI"), &efi_boot.join("BOOTX64.EFI"))?;
 
     let iso = out_dir.join(iso_name);
-    let status = Command::new("xorriso")
+    let mut xorriso = Command::new("xorriso");
+    xorriso
         .args([
             "-as",
             "mkisofs",
@@ -369,28 +370,39 @@ fn assemble_iso(
         ])
         .arg(&root)
         .arg("-o")
-        .arg(&iso)
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|e| format!("failed to run xorriso (is it installed?): {e}"))?;
-    if !status.success() {
-        return Err("xorriso failed".into());
-    }
+        .arg(&iso);
+    run_tool(&mut xorriso, "xorriso (is it installed?)")?;
 
     let installer = limine.join("limine");
     if installer.is_file() {
-        let status = Command::new(&installer)
-            .arg("bios-install")
-            .arg(&iso)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|e| format!("failed to run limine bios-install: {e}"))?;
-        if !status.success() {
-            return Err("limine bios-install failed".into());
-        }
+        let mut bios_install = Command::new(&installer);
+        bios_install.arg("bios-install").arg(&iso);
+        run_tool(&mut bios_install, "limine bios-install")?;
     }
     Ok(iso)
+}
+
+/// Runs an external tool with its output captured. Output is shown when the tool fails (so
+/// diagnostics are never lost) or when `CARV_XTASK_VERBOSE` is set; otherwise it stays quiet.
+fn run_tool(cmd: &mut Command, what: &str) -> Result<(), String> {
+    let out = cmd
+        .output()
+        .map_err(|e| format!("failed to run {what}: {e}"))?;
+    let verbose = env::var_os("CARV_XTASK_VERBOSE").is_some();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() {
+        return Err(format!(
+            "{what} failed ({}):\n{}{}",
+            out.status,
+            stdout.trim_end(),
+            stderr.trim_end()
+        ));
+    }
+    if verbose && !(stdout.trim().is_empty() && stderr.trim().is_empty()) {
+        eprintln!("--- {what} ---\n{}{}", stdout, stderr);
+    }
+    Ok(())
 }
 
 /// Limine configuration. `serial: yes` mirrors the boot menu to COM1 so the handoff is
@@ -1323,27 +1335,22 @@ fn kernel_test_executable(release: bool) -> Result<PathBuf, String> {
         return Err("building the kernel test binary failed".into());
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let exe = stdout
-        .lines()
-        .filter(|l| l.contains("\"compiler-artifact\"") && l.contains("\"test\":true"))
-        .filter(|l| l.contains(&format!("\"name\":\"{KERNEL_PACKAGE}\"")))
-        .find_map(|l| json_string_field(l, "executable"))
-        .ok_or("cargo did not report a test executable for the kernel")?;
-    Ok(PathBuf::from(exe))
+    test_executable_from_messages(&stdout, KERNEL_PACKAGE)
+        .ok_or_else(|| "cargo did not report a test executable for the kernel".to_string())
 }
 
-/// Extracts `"key":"value"` from one line of cargo JSON without a JSON dependency.
-fn json_string_field(line: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\":\"");
-    let start = line.find(&needle)? + needle.len();
-    let rest = &line[start..];
-    let end = rest.find('"')?;
-    let value = &rest[..end];
-    if value == "null" || value.is_empty() {
-        None
-    } else {
-        Some(value.replace("\\/", "/"))
-    }
+/// Finds the test executable for `package` in cargo's `--message-format=json` output (one JSON
+/// object per line). Uses a real JSON parser, so paths containing quotes or backslashes (Windows)
+/// come back exactly as cargo wrote them.
+fn test_executable_from_messages(messages: &str, package: &str) -> Option<PathBuf> {
+    messages
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|m| m["reason"] == "compiler-artifact")
+        .filter(|m| m["target"]["name"] == package)
+        .filter(|m| m["profile"]["test"] == true)
+        .filter_map(|m| m["executable"].as_str().map(PathBuf::from))
+        .next()
 }
 
 fn tail(text: &str, lines: usize) -> String {
@@ -1542,17 +1549,24 @@ mod tests {
     }
 
     #[test]
-    fn json_string_field_extracts_executable() {
-        let line = r#"{"reason":"compiler-artifact","target":{"name":"chisel"},"profile":{"test":true},"executable":"/tmp/x/chisel-abc","fresh":false}"#;
-        assert_eq!(
-            json_string_field(line, "executable").as_deref(),
-            Some("/tmp/x/chisel-abc")
+    fn test_executable_parsed_from_cargo_json() {
+        let msgs = concat!(
+            r#"{"reason":"compiler-artifact","target":{"name":"limine","kind":["lib"]},"profile":{"test":false},"executable":null}"#,
+            "\n",
+            r#"{"reason":"compiler-artifact","target":{"name":"chisel","kind":["bin"]},"profile":{"test":false},"executable":"/t/debug/chisel"}"#,
+            "\n",
+            r#"not json at all"#,
+            "\n",
+            r#"{"reason":"compiler-artifact","target":{"name":"chisel","kind":["bin"]},"profile":{"test":true},"executable":"C:\\tar\"get\\deps\\chisel-ab12"}"#,
+            "\n",
+            r#"{"reason":"build-finished","success":true}"#,
+            "\n",
         );
-        assert_eq!(
-            json_string_field(r#"{"executable":null}"#, "executable"),
-            None
-        );
-        assert_eq!(json_string_field(r#"{"other":"x"}"#, "executable"), None);
+        let exe = test_executable_from_messages(msgs, "chisel").unwrap();
+        // Escaped backslashes and the escaped quote survive intact (issues #13, #14).
+        assert_eq!(exe.to_str().unwrap(), r#"C:\tar"get\deps\chisel-ab12"#);
+        assert!(test_executable_from_messages(msgs, "xtask").is_none());
+        assert!(test_executable_from_messages("", "chisel").is_none());
     }
 
     #[test]
