@@ -52,7 +52,8 @@ jobs:
         # clippy with only that lint so a violation is reported here, under "security".
         run: |
           cargo clippy -p chisel --target x86_64-unknown-none --locked -- -A clippy::all -D clippy::undocumented_unsafe_blocks
-          cargo clippy --workspace --all-targets --locked -- -A clippy::all -D clippy::undocumented_unsafe_blocks
+          cargo clippy --workspace --exclude chisel --all-targets --locked -- -A clippy::all -D clippy::undocumented_unsafe_blocks
+          cargo clippy -p chisel --target x86_64-unknown-none --locked --tests -- -A clippy::all -D clippy::undocumented_unsafe_blocks
 
       - name: unsafe inventory (informational)
         run: |

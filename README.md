@@ -80,7 +80,8 @@ Everything goes through `cargo xtask` (a small Rust program in [`xtask/`](xtask/
 | `cargo xtask image [--release]` | Build a bootable ISO (`target/carv-os.iso`, UEFI + BIOS) and a blank 64 MiB virtio disk (`target/data.img`). |
 | `cargo xtask limine` | Fetch and verify the pinned Limine bootloader files (done automatically by `image`). |
 | `cargo xtask run [flags]` | Build the image and boot it in QEMU with the serial console on your terminal. |
-| `cargo xtask smoke [--release] [--timeout SECS]` | Boot the image under UEFI, BIOS, and with a deliberate panic, and check the serial output. |
+| `cargo xtask test [--host] [--kernel] [--integration] [--release] [--timeout SECS]` | **The one command every PR must pass**: host unit tests, the in-kernel test binary booted in QEMU, and the boot smoke scenarios. No selector runs all three. |
+| `cargo xtask smoke [--release] [--timeout SECS]` | Boot the image under UEFI, BIOS, and with a deliberate panic, and check the serial output (also part of `test`). |
 | `cargo xtask docs-gate [--base REF]` | Fail if code changed without matching documentation changes (see [Contributing](#contributing)). |
 | `cargo xtask perf [--runs N]` | Measure release-kernel and ISO size and boot timings (median of N boots) against budgets; report in `target/perf/report.md`. |
 | `cargo xtask help` | List commands. |
@@ -107,13 +108,21 @@ Notes:
 
 ## Testing
 
+```bash
+cargo xtask test            # everything a PR must pass: host tests, in-kernel tests in QEMU, boot smoke
+cargo xtask test --kernel   # just the in-kernel tests (kernel/src/test.rs, `#[test_case]` functions)
+```
+In-kernel tests are ordinary functions marked `#[test_case]` in the kernel crate. `cargo xtask test`
+builds them into a bootable test kernel, boots it under Limine in QEMU, and reads the result from the
+`isa-debug-exit` exit code, so a hang, a triple fault or a panic all count as failures.
+
 Each badge at the top of this file is one GitHub Actions workflow; each runs on every pull request
 and on `main`, and each is a required check before a PR can merge.
 
 | Check | Workflow | Locally | What it covers |
 |---|---|---|---|
-| **Build** | [`build.yml`](.github/workflows/build.yml) | `cargo fmt --all --check` · `cargo clippy --workspace --all-targets -- -D warnings` · `cargo clippy -p chisel --target x86_64-unknown-none -- -D warnings` · `cargo xtask build [--release]` · `cargo test --workspace` · `cargo xtask image --release` | Formatting, warnings-as-errors, debug and release kernel builds with layout verification, host unit tests, a bootable ISO (uploaded as an artifact on `main`). |
-| **CI** | [`ci.yml`](.github/workflows/ci.yml) | `cargo xtask smoke` | The end-to-end gate: real QEMU boots under UEFI, BIOS and the panic path, with the serial output asserted. Logs in `target/smoke/*.log`. In-kernel and integration tests (`cargo xtask test`) join here in P0.4. |
+| **Build** | [`build.yml`](.github/workflows/build.yml) | `cargo fmt --all --check` · `cargo clippy --workspace --exclude chisel --all-targets -- -D warnings` · `cargo clippy -p chisel --target x86_64-unknown-none -- -D warnings` · `cargo xtask build [--release]` · `cargo test --workspace --exclude chisel` · `cargo xtask image --release` | Formatting, warnings-as-errors, debug and release kernel builds with layout verification, the kernel test binary, host unit tests, a bootable ISO (uploaded as an artifact on `main`). |
+| **CI** | [`ci.yml`](.github/workflows/ci.yml) | `cargo xtask test` | The end-to-end gate: host unit tests; the **in-kernel test binary** booted in QEMU, which reports pass/fail through the `isa-debug-exit` device (exit 33 / 35); and real UEFI, BIOS and panic-path boots with the serial output asserted. Logs in `target/test/` and `target/smoke/`. |
 | **Security** | [`security.yml`](.github/workflows/security.yml) | `cargo deny check` · `cargo audit` · `cargo clippy … -D clippy::undocumented_unsafe_blocks` | RustSec advisories (also weekly, so new advisories are caught without a code change), license allow-list, wildcard/duplicate dependency policy, crates.io-only sources, every `unsafe` block documented, every Action pinned to a commit SHA, no `write-all` workflow permissions. |
 | **Docs** | [`docs.yml`](.github/workflows/docs.yml) | `cargo xtask docs-gate` · `RUSTDOCFLAGS=-D warnings cargo doc --no-deps` | Documentation travels with code (see [Contributing](#contributing)), rustdoc builds warning-free with `missing_docs` denied, and every local Markdown link and anchor resolves. |
 | **Performance** | [`perf.yml`](.github/workflows/perf.yml) | `cargo xtask perf` | Release-kernel loaded size, ISO size, boot-to-banner and banner-to-halt time (median of 5 boots under KVM) against budgets set in `xtask`. A size or boot-time regression fails the check; the report lands in the job summary. |

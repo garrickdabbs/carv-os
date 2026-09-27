@@ -43,7 +43,7 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
         run: |
-          cargo doc --no-deps --workspace --locked
+          cargo doc --no-deps --workspace --exclude chisel --locked
           cargo doc --no-deps -p chisel --target x86_64-unknown-none --locked
 
       - name: Markdown links resolve (offline, local files and anchors)

@@ -27,3 +27,6 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   (`cargo xtask perf`: kernel/ISO size and boot-time budgets), CodeQL (Rust + Actions), OpenSSF Scorecard.
   Crate roots now `#![deny(clippy::undocumented_unsafe_blocks)]` and `#![deny(missing_docs)]`. Repo now public
   with secret scanning + push protection, private vulnerability reporting and Dependabot security updates on.
+- P0.4: in-kernel test framework (`kernel/src/test.rs`: `#[test_case]` runner, `isa-debug-exit` pass/fail codes)
+  and `cargo xtask test` — host unit tests, the test kernel booted in QEMU, and the boot smoke scenarios in one
+  command; CI's `boot-smoke` job now runs it. Host-side `cargo test`/`clippy` use `--workspace --exclude chisel`.

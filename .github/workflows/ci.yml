@@ -1,6 +1,7 @@
-# CI: the end-to-end gate — does the OS actually boot? Real QEMU boots (UEFI, BIOS, panic path)
-# with the serial output asserted. `cargo xtask test` (in-kernel tests + integration tests)
-# joins this workflow in P0.4. Design: docs/PLAN.md §7.2.
+# CI: the end-to-end gate — `cargo xtask test`: host unit tests, the in-kernel test binary booted
+# in QEMU (isa-debug-exit pass/fail code), and real UEFI/BIOS/panic boots with the serial output
+# asserted. Design: docs/PLAN.md §7.2. The job keeps its historical name `boot-smoke` because the
+# main ruleset requires that check by name.
 
 name: CI
 
@@ -44,14 +45,15 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm || true
-      - name: smoke boots (UEFI, BIOS, panic-test)
-        run: cargo xtask smoke --timeout 120
+      - name: cargo xtask test (host + in-kernel + boot smoke)
+        run: cargo xtask test --timeout 120
       - name: upload serial logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: smoke-serial-logs
+          name: test-serial-logs
           path: |
+            target/test/*.log
             target/smoke/*.log
             target/qemu.log
           if-no-files-found: ignore

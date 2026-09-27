@@ -34,15 +34,17 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all --check
       - name: clippy (host)
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --exclude chisel --all-targets --locked -- -D warnings
       - name: clippy (kernel)
         run: cargo clippy -p chisel --target x86_64-unknown-none --locked -- -D warnings
       - name: kernel debug build + layout check
         run: cargo xtask build
       - name: kernel release build + layout check
         run: cargo xtask build --release
+      - name: kernel test binary builds
+        run: cargo test -p chisel --target x86_64-unknown-none --locked --no-run
       - name: host unit tests
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude chisel --locked
       - name: install xorriso
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xorriso
       - name: bootable ISO (release)

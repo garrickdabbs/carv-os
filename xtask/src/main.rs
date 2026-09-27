@@ -12,8 +12,9 @@
 //!   the serial output (CI's boot gate until `test` arrives in P0.4).
 //! - `docs-gate [--base REF]`: fail when code changed without matching documentation changes.
 //! - `perf [--runs N]`: measure kernel/ISO size and boot-to-banner time against budgets.
-//!
-//! `test` arrives in P0.4.
+//! - `test [--host] [--kernel] [--integration] [--release] [--timeout SECS]`: the one command every
+//!   PR must pass — host unit tests, the in-kernel test binary under QEMU (`isa-debug-exit`), and
+//!   the boot smoke scenarios. With no selector, all three run.
 
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(missing_docs)]
@@ -110,6 +111,7 @@ fn main() -> ExitCode {
         Some("smoke") => smoke(&args[1..]),
         Some("docs-gate") => docs_gate(&args[1..]),
         Some("perf") => perf(&args[1..]),
+        Some("test") => test(&args[1..]),
         Some("help") | None => {
             print_help();
             Ok(())
@@ -153,6 +155,10 @@ fn print_help() {
     );
     println!(
         "  perf [--runs N]                  Kernel/ISO size and boot timings vs budgets (report in target/perf/)"
+    );
+    println!("  test [--host] [--kernel] [--integration] [--release] [--timeout SECS]");
+    println!(
+        "                                   Host unit tests + in-kernel tests in QEMU + boot smoke (default: all)"
     );
 }
 
@@ -281,9 +287,34 @@ fn image(args: &[String]) -> Result<PathBuf, String> {
 
 fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
     let kernel = build_kernel(release)?;
+    let iso = assemble_iso(&kernel, cmdline, &target_dir(), ISO_NAME)?;
+
+    let data = target_dir().join(DATA_IMG_NAME);
+    if !data.is_file() {
+        let f = fs::File::create(&data).map_err(|e| format!("creating {}: {e}", data.display()))?;
+        f.set_len(DATA_IMG_BYTES)
+            .map_err(|e| format!("sizing {}: {e}", data.display()))?;
+        println!(
+            "data disk: {} ({} MiB, blank)",
+            data.display(),
+            DATA_IMG_BYTES >> 20
+        );
+    }
+    println!("image: {}", iso.display());
+    Ok(iso)
+}
+
+/// Assembles a bootable ISO around `kernel` (any ELF built for the kernel target — the normal
+/// kernel or a test kernel) in `out_dir/iso_root`, writing `out_dir/iso_name`.
+fn assemble_iso(
+    kernel: &Path,
+    cmdline: &str,
+    out_dir: &Path,
+    iso_name: &str,
+) -> Result<PathBuf, String> {
     let limine = ensure_limine()?;
 
-    let root = target_dir().join("iso_root");
+    let root = out_dir.join("iso_root");
     if root.exists() {
         fs::remove_dir_all(&root).map_err(|e| format!("cleaning {}: {e}", root.display()))?;
     }
@@ -294,7 +325,7 @@ fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
         fs::create_dir_all(d).map_err(|e| format!("creating {}: {e}", d.display()))?;
     }
 
-    copy(&kernel, &boot.join(KERNEL_PACKAGE))?;
+    copy(kernel, &boot.join(KERNEL_PACKAGE))?;
     fs::write(boot_limine.join("limine.conf"), limine_conf(cmdline))
         .map_err(|e| format!("writing limine.conf: {e}"))?;
     for name in [
@@ -306,7 +337,7 @@ fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
     }
     copy(&limine.join("BOOTX64.EFI"), &efi_boot.join("BOOTX64.EFI"))?;
 
-    let iso = target_dir().join(ISO_NAME);
+    let iso = out_dir.join(iso_name);
     let status = Command::new("xorriso")
         .args([
             "-as",
@@ -333,6 +364,7 @@ fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
         .arg(&root)
         .arg("-o")
         .arg(&iso)
+        .stderr(Stdio::null())
         .status()
         .map_err(|e| format!("failed to run xorriso (is it installed?): {e}"))?;
     if !status.success() {
@@ -352,20 +384,6 @@ fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
             return Err("limine bios-install failed".into());
         }
     }
-
-    let data = target_dir().join(DATA_IMG_NAME);
-    if !data.is_file() {
-        let f = fs::File::create(&data).map_err(|e| format!("creating {}: {e}", data.display()))?;
-        f.set_len(DATA_IMG_BYTES)
-            .map_err(|e| format!("sizing {}: {e}", data.display()))?;
-        println!(
-            "data disk: {} ({} MiB, blank)",
-            data.display(),
-            DATA_IMG_BYTES >> 20
-        );
-    }
-
-    println!("image: {}", iso.display());
     Ok(iso)
 }
 
@@ -484,7 +502,8 @@ fn qemu_command(iso: &Path, opts: &RunOpts) -> Result<Command, String> {
     if !opts.bios {
         let (code, vars) = find_ovmf()?;
         // OVMF wants a writable vars image; give it a private copy so runs don't share state.
-        let vars_copy = target_dir().join("OVMF_VARS.fd");
+        let stem = iso.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+        let vars_copy = target_dir().join(format!("OVMF_VARS-{stem}.fd"));
         copy(&vars, &vars_copy)?;
         cmd.arg("-drive").arg(format!(
             "if=pflash,unit=0,format=raw,readonly=on,file={}",
@@ -604,6 +623,11 @@ fn smoke(args: &[String]) -> Result<(), String> {
         }
     }
 
+    run_smoke(release, timeout)
+}
+
+/// Runs every smoke scenario; used by both `smoke` and `test --integration`.
+fn run_smoke(release: bool, timeout: Duration) -> Result<(), String> {
     let log_dir = target_dir().join("smoke");
     fs::create_dir_all(&log_dir).map_err(|e| format!("creating {}: {e}", log_dir.display()))?;
 
@@ -1111,6 +1135,275 @@ fn boot_timing(
     Ok((text, timing))
 }
 
+// ---------------------------------------------------------------- test
+
+/// `isa-debug-exit` turns a written byte `v` into QEMU exit status `(v << 1) | 1`; these match
+/// `QemuExitCode` in `kernel/src/test.rs`.
+const QEMU_EXIT_TESTS_PASSED: i32 = (0x10 << 1) | 1;
+const QEMU_EXIT_TESTS_FAILED: i32 = (0x11 << 1) | 1;
+
+struct TestOpts {
+    host: bool,
+    kernel: bool,
+    integration: bool,
+    release: bool,
+    timeout: Duration,
+}
+
+fn parse_test_opts(args: &[String]) -> Result<TestOpts, String> {
+    let mut o = TestOpts {
+        host: false,
+        kernel: false,
+        integration: false,
+        release: false,
+        timeout: Duration::from_secs(120),
+    };
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--host" => o.host = true,
+            "--kernel" => o.kernel = true,
+            "--integration" => o.integration = true,
+            "--release" => o.release = true,
+            "--timeout" => {
+                let secs = it
+                    .next()
+                    .ok_or("--timeout needs a value in seconds")?
+                    .parse::<u64>()
+                    .map_err(|e| format!("bad --timeout value: {e}"))?;
+                o.timeout = Duration::from_secs(secs);
+            }
+            other => return Err(format!("unknown test option `{other}`")),
+        }
+    }
+    if !(o.host || o.kernel || o.integration) {
+        o.host = true;
+        o.kernel = true;
+        o.integration = true;
+    }
+    Ok(o)
+}
+
+/// The one command every PR must pass. Layers (docs/PLAN.md §6): 1 host unit tests,
+/// 2 in-kernel tests booted in QEMU, 3 boot smoke scenarios. Prints a summary and fails if any
+/// selected layer failed.
+fn test(args: &[String]) -> Result<(), String> {
+    let opts = parse_test_opts(args)?;
+    let mut results: Vec<(&str, Result<String, String>)> = Vec::new();
+
+    if opts.host {
+        results.push(("host unit tests", host_tests()));
+    }
+    if opts.kernel {
+        results.push(("in-kernel tests (QEMU)", kernel_tests(&opts)));
+    }
+    if opts.integration {
+        results.push((
+            "boot smoke (UEFI, BIOS, panic)",
+            run_smoke(opts.release, opts.timeout).map(|()| "3 scenarios passed".to_string()),
+        ));
+    }
+
+    println!("\ntest summary:");
+    let mut failed = 0;
+    for (name, r) in &results {
+        match r {
+            Ok(msg) => println!("  PASS  {name}: {msg}"),
+            Err(msg) => {
+                failed += 1;
+                println!("  FAIL  {name}: {msg}");
+            }
+        }
+    }
+    if failed == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "{failed} of {} test layer(s) failed",
+            results.len()
+        ))
+    }
+}
+
+/// Layer 1: `cargo test` for every workspace crate except the kernel (which has no host target).
+fn host_tests() -> Result<String, String> {
+    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let status = Command::new(cargo)
+        .current_dir(workspace_root())
+        .args([
+            "test",
+            "--workspace",
+            "--exclude",
+            KERNEL_PACKAGE,
+            "--locked",
+        ])
+        .status()
+        .map_err(|e| format!("failed to run cargo: {e}"))?;
+    if status.success() {
+        Ok("passed".into())
+    } else {
+        Err("cargo test failed".into())
+    }
+}
+
+/// Layer 2: build the kernel's test binary, boot it in QEMU, and read the `isa-debug-exit` code.
+fn kernel_tests(opts: &TestOpts) -> Result<String, String> {
+    let exe = kernel_test_executable(opts.release)?;
+    let out_dir = target_dir().join("test");
+    fs::create_dir_all(&out_dir).map_err(|e| format!("creating {}: {e}", out_dir.display()))?;
+    let iso = assemble_iso(&exe, "", &out_dir, "carv-os-test.iso")?;
+    let run_opts = RunOpts {
+        release: opts.release,
+        bios: false,
+        debug: false,
+        timeout: Some(opts.timeout),
+        cmdline: String::new(),
+    };
+    let mut cmd = qemu_command(&iso, &run_opts)?;
+    let (output, status) = run_qemu_until_exit(&mut cmd, opts.timeout)?;
+    let log = out_dir.join("kernel-tests.log");
+    fs::write(&log, &output).map_err(|e| format!("writing {}: {e}", log.display()))?;
+
+    let summary = output
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("chisel-test:"))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    match status.and_then(|s| s.code()) {
+        Some(QEMU_EXIT_TESTS_PASSED) => Ok(format!("{summary} (log: {})", log.display())),
+        Some(QEMU_EXIT_TESTS_FAILED) => Err(format!(
+            "a kernel test failed (log: {}):\n{}",
+            log.display(),
+            tail(&output, 12)
+        )),
+        Some(code) => Err(format!(
+            "QEMU exited with unexpected status {code} (log: {}):\n{}",
+            log.display(),
+            tail(&output, 12)
+        )),
+        None => Err(format!(
+            "kernel tests did not finish within {:?} (log: {}):\n{}",
+            opts.timeout,
+            log.display(),
+            tail(&output, 12)
+        )),
+    }
+}
+
+/// Builds the kernel test binary with `cargo test --no-run` and returns its path from cargo's
+/// JSON messages.
+fn kernel_test_executable(release: bool) -> Result<PathBuf, String> {
+    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let mut cmd = Command::new(cargo);
+    cmd.current_dir(workspace_root()).args([
+        "test",
+        "--package",
+        KERNEL_PACKAGE,
+        "--target",
+        KERNEL_TARGET,
+        "--locked",
+        "--no-run",
+        "--message-format=json",
+    ]);
+    if release {
+        cmd.arg("--release");
+    }
+    let out = cmd
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|e| format!("failed to run cargo: {e}"))?;
+    if !out.status.success() {
+        return Err("building the kernel test binary failed".into());
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let exe = stdout
+        .lines()
+        .filter(|l| l.contains("\"compiler-artifact\"") && l.contains("\"test\":true"))
+        .filter(|l| l.contains(&format!("\"name\":\"{KERNEL_PACKAGE}\"")))
+        .find_map(|l| json_string_field(l, "executable"))
+        .ok_or("cargo did not report a test executable for the kernel")?;
+    Ok(PathBuf::from(exe))
+}
+
+/// Extracts `"key":"value"` from one line of cargo JSON without a JSON dependency.
+fn json_string_field(line: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\":\"");
+    let start = line.find(&needle)? + needle.len();
+    let rest = &line[start..];
+    let end = rest.find('"')?;
+    let value = &rest[..end];
+    if value == "null" || value.is_empty() {
+        None
+    } else {
+        Some(value.replace("\\/", "/"))
+    }
+}
+
+fn tail(text: &str, lines: usize) -> String {
+    let all: Vec<&str> = text.lines().collect();
+    let start = all.len().saturating_sub(lines);
+    all[start..].join("\n")
+}
+
+/// Runs QEMU with the serial console captured until it exits on its own or `timeout` elapses
+/// (then it is killed). Returns the serial text and the exit status (None on timeout).
+fn run_qemu_until_exit(
+    cmd: &mut Command,
+    timeout: Duration,
+) -> Result<(String, Option<std::process::ExitStatus>), String> {
+    use std::io::Read;
+    use std::sync::mpsc;
+
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to start qemu-system-x86_64: {e}"))?;
+    let mut stdout = child.stdout.take().expect("stdout was requested as piped");
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match stdout.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    let start = Instant::now();
+    let mut out: Vec<u8> = Vec::new();
+    let status = loop {
+        if let Some(s) = child
+            .try_wait()
+            .map_err(|e| format!("waiting for qemu: {e}"))?
+        {
+            break Some(s);
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(chunk) => out.extend_from_slice(&chunk),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                break Some(child.wait().map_err(|e| format!("waiting for qemu: {e}"))?);
+            }
+        }
+    };
+    while let Ok(chunk) = rx.try_recv() {
+        out.extend_from_slice(&chunk);
+    }
+    Ok((String::from_utf8_lossy(&out).into_owned(), status))
+}
+
 // ---------------------------------------------------------------- shared
 
 fn workspace_root() -> PathBuf {
@@ -1241,6 +1534,36 @@ mod tests {
             "docs-only change"
         );
         assert!(v(&[]).is_empty());
+    }
+
+    #[test]
+    fn json_string_field_extracts_executable() {
+        let line = r#"{"reason":"compiler-artifact","target":{"name":"chisel"},"profile":{"test":true},"executable":"/tmp/x/chisel-abc","fresh":false}"#;
+        assert_eq!(
+            json_string_field(line, "executable").as_deref(),
+            Some("/tmp/x/chisel-abc")
+        );
+        assert_eq!(
+            json_string_field(r#"{"executable":null}"#, "executable"),
+            None
+        );
+        assert_eq!(json_string_field(r#"{"other":"x"}"#, "executable"), None);
+    }
+
+    #[test]
+    fn test_opts_default_to_all_layers() {
+        let o = parse_test_opts(&[]).unwrap();
+        assert!(o.host && o.kernel && o.integration && !o.release);
+        let k = parse_test_opts(&["--kernel".into(), "--timeout".into(), "9".into()]).unwrap();
+        assert!(k.kernel && !k.host && !k.integration);
+        assert_eq!(k.timeout, Duration::from_secs(9));
+        assert!(parse_test_opts(&["--nope".into()]).is_err());
+    }
+
+    #[test]
+    fn qemu_exit_codes_match_kernel() {
+        assert_eq!(QEMU_EXIT_TESTS_PASSED, 33);
+        assert_eq!(QEMU_EXIT_TESTS_FAILED, 35);
     }
 
     #[test]
