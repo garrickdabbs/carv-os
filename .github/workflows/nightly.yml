@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# A scheduled run and a manual dispatch must never race on the rolling `nightly` release.
+concurrency:
+  group: nightly-release
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"

@@ -34,10 +34,29 @@ jobs:
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      - name: check out the base branch's xtask (the gate must not be judged by the PR's own copy)
+        if: "github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.base_ref }}
+          path: base-tooling
       - name: docs gate — code changes must carry documentation
-        # Dependabot PRs are their own record. The skip marker is documented in the README.
-        if: "github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && !contains(github.event.pull_request.body, 'docs-gate: skip')"
-        run: cargo xtask docs-gate --base "origin/${{ github.base_ref }}"
+        # Dependabot PRs are their own record. The skip marker (with a reason) is documented in the README;
+        # the PR body reaches the tool through an environment variable, never through the shell.
+        if: "github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'"
+        env:
+          DOCS_GATE_PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          # Bootstrap: a base branch whose xtask predates `--repo` cannot judge this checkout, so fall
+          # back to the PR's copy exactly once (loudly). Every later PR is judged by the base copy.
+          if cargo run --quiet --manifest-path base-tooling/xtask/Cargo.toml -- help 2>/dev/null | grep -q -- '--repo'; then
+            cargo run --quiet --manifest-path base-tooling/xtask/Cargo.toml -- \
+              docs-gate --repo "$GITHUB_WORKSPACE" --base "origin/${{ github.base_ref }}"
+          else
+            echo "::warning::base branch xtask has no --repo support; running the PR's docs-gate (bootstrap only)"
+            cargo xtask docs-gate --base "origin/${{ github.base_ref }}"
+          fi
 
       - name: rustdoc (warnings are errors; missing docs are errors via crate lints)
         env:

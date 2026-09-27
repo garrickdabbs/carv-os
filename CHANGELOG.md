@@ -7,6 +7,20 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Changed
+- Review follow-ups (threads on #7, #24, #25, #30, #32, #33, #37, #39): the docs gate runs from the base
+  branch's `xtask`, checks that `## [Unreleased]` actually gained content, requires a *new* ADR for
+  `docs/abi.md`, and only honours a skip marker with a ≥ 20-character reason; `cargo deny` treats duplicate
+  dependency versions as errors; the nightly workflow has a concurrency group; SBOMs are included in the
+  release provenance subjects; `release-check` output writing is a tested helper; TOML quote stripping only
+  removes a matching delimiter pair; the IDT also covers `#CP`, `#HV` and `#VC`; the frame allocator
+  tracks *allocated* frames separately so a stray `free` cannot release a reservation, initialises only its
+  own storage, and takes its lock with interrupts disabled; the mapper rejects pages outside the kernel
+  dynamic region, returns the frame on failure, and also locks with interrupts disabled.
+- `stack-overflow-test` passes `depth = 0` in `rdi` explicitly instead of relying on a leftover register value (#40).
+- Review round 2 on the follow-up PR: the docs workflow bootstraps when the base `xtask` predates `--repo`; the
+  skip directive must start a line and be followed by a separator; `mark_used_range` refuses ranges containing
+  allocated frames; `Frame` constructors are crate-private and `paging::map` refuses frames the allocator has
+  not handed out (`FrameNotOwned`).
 - Release and nightly workflows split into a read-only build job and a minimal-permission publish job; the SLSA
   provenance is now also published as `carv-os-<tag>.intoto.jsonl` and `carv-os-<tag>.provenance.sigstore.json`
   release assets (#35). Fuller `.gitignore`; `CONTRIBUTING.md` added (#34, #35).

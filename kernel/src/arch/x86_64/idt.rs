@@ -1,7 +1,8 @@
 //! Interrupt Descriptor Table and CPU exception handlers.
 //!
-//! Every architectural exception (vectors 0–31 that x86_64 defines) gets a handler, so a fault
-//! always produces a readable message on the serial console instead of a silent triple fault.
+//! Every architectural exception the `x86_64` crate exposes (vectors 0–31, including #CP, #HV
+//! and #VC for CET / hypervisor environments) gets a handler, so a fault always produces a
+//! readable message on the serial console instead of a silent triple fault.
 //! The double-fault handler runs on its own IST stack (see `gdt.rs`) and is therefore reachable
 //! even when the faulting code's stack is unusable. Hardware interrupts (vectors 32+) are wired up
 //! with the APIC in P1.5.
@@ -51,6 +52,12 @@ pub fn init() {
         idt.machine_check.set_handler_fn(machine_check);
         idt.simd_floating_point.set_handler_fn(simd_floating_point);
         idt.virtualization.set_handler_fn(virtualization);
+        idt.cp_protection_exception
+            .set_handler_fn(cp_protection_exception);
+        idt.hv_injection_exception
+            .set_handler_fn(hv_injection_exception);
+        idt.vmm_communication_exception
+            .set_handler_fn(vmm_communication_exception);
         idt.security_exception.set_handler_fn(security_exception);
 
         IDT.get().load();
@@ -126,6 +133,7 @@ fatal! {
     x87_floating_point => "#MF x87 floating point",
     simd_floating_point => "#XM SIMD floating point",
     virtualization => "#VE virtualization",
+    hv_injection_exception => "#HV hypervisor injection",
 }
 
 fatal_with_code! {
@@ -134,6 +142,8 @@ fatal_with_code! {
     stack_segment_fault => "#SS stack segment fault",
     general_protection_fault => "#GP general protection fault",
     alignment_check => "#AC alignment check",
+    cp_protection_exception => "#CP control protection",
+    vmm_communication_exception => "#VC VMM communication",
     security_exception => "#SX security exception",
 }
 
