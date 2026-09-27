@@ -133,6 +133,11 @@ pub fn init() -> Info {
     }
 }
 
+/// This CPU's local APIC id.
+pub fn id() -> u8 {
+    (read(REG_ID) >> 24) as u8
+}
+
 /// Timer ticks since [`init`] (1 kHz once interrupts are enabled).
 pub fn ticks() -> u64 {
     TICKS.load(Ordering::Relaxed)

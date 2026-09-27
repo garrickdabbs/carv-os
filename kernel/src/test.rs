@@ -322,3 +322,28 @@ fn lapic_timer_ticks_at_one_khz() {
         "expected ~100 ticks in 100 ms at 1 kHz, got {ticks}"
     );
 }
+
+#[test_case]
+fn acpi_summary_lists_apics_hpet_and_ecam() {
+    use crate::arch::x86_64::apic;
+    use crate::platform::acpi;
+    let s = acpi::summary().expect("ACPI parsed at boot");
+    assert!(!s.tables.is_empty(), "no ACPI tables found");
+    assert!(
+        s.tables.iter().any(|t| t == b"APIC"),
+        "MADT missing from {:?}",
+        s.tables.len()
+    );
+    assert!(!s.cpu_apic_ids.is_empty(), "MADT lists no processors");
+    assert_eq!(
+        s.cpu_apic_ids[0],
+        u32::from(apic::id()),
+        "boot processor APIC id must match the running local APIC"
+    );
+    assert!(!s.io_apics.is_empty(), "no I/O APIC in the MADT");
+    assert!(s.hpet_base.is_some(), "QEMU q35 always has an HPET");
+    assert!(
+        s.ecam.iter().any(|r| r.segment == 0 && r.bus_start == 0),
+        "q35 has an MCFG with segment 0 starting at bus 0"
+    );
+}
