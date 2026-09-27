@@ -6,7 +6,7 @@ members = ["kernel", "xtask"]
 default-members = ["xtask"]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/garrickdabbs/carv-os"
 license = "MIT"

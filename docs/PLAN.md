@@ -452,9 +452,12 @@ protection, Scorecard and rulesets are all available at no cost.
   `.github/release.yml` categories).
 - **Release flow** (triggered by pushing a `v*` tag, which only the maintainer can do because tag
   creation is covered by the ruleset):
-  1. `release-check`, then a **reproducible** `cargo xtask image --release`
+  1. `release-check`, then a **reproducible** `cargo xtask image --release` — `xtask` sets
+     `SOURCE_DATE_EPOCH` to the commit time for xorriso, and the workflow builds twice from clean and
+     requires identical SHA-256s
   2. run the **full test suite against the exact release artifacts** (not a rebuild)
-  3. boot-smoke: boot the release ISO under QEMU and require the banner and a shell prompt
+  3. boot-smoke: `cargo xtask smoke --iso <release iso>` boots the exact artifact under UEFI and BIOS
+     and requires the banner (and, from Phase 6, a shell prompt)
   4. produce artifacts: `carv-os-v0.y.z-x86_64.iso`, `carv-os-v0.y.z-data.img.zst`,
      `chisel-v0.y.z.elf` (unstripped kernel with symbols, for debugging crash reports),
      `SHA256SUMS`, SBOM `carv-os-v0.y.z.cdx.json` (`cargo cyclonedx`)
@@ -488,7 +491,7 @@ phase's interfaces are frozen.
 | P0.5 | `ci.yml` per §7.2: lint (fmt, clippy both targets, doc, `cargo deny`), host tests (nextest + JUnit), kernel tests and integration tests in QEMU with KVM enabled, `all-green` gate; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows a single required `all-green` check; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR |
 | P0.6 | `README.md` (build, run, verify-a-release sections), `docs/adr/0001-microkernel-rust-x86_64.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE` | Files exist; README badges for CI and Scorecard render — **done 2026-09-27** |
 | P0.7 | Repo governance per §7.1: `main` ruleset (PR + `all-green` required, linear history, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board, fine-grained PAT for agents | Direct push to `main` is rejected; a PR without green CI can't merge; agent token can't merge |
-| P0.8 | `release.yml` per §7.5 + `cargo xtask release-check`: reproducible ISO, tests against artifacts, boot-smoke, SHA256SUMS, SBOM, Sigstore signature, build provenance attestation, GitHub Release with generated notes. `nightly.yml` skeleton (toolchain drift, `cargo audit`, rolling `nightly` pre-release) | Tag `v0.1.0` produces a release whose ISO boots to the banner and passes `gh attestation verify`; two runs produce identical ISO hashes |
+| P0.8 | `release.yml` per §7.5 + `cargo xtask release-check`: reproducible ISO, tests against artifacts, boot-smoke, SHA256SUMS, SBOM, Sigstore signature, build provenance attestation, GitHub Release with generated notes. `nightly.yml` (daily tests, stress, perf, audit, toolchain drift, rolling `nightly` pre-release) | Tag `v0.1.0` produces a release whose ISO boots to the banner and passes `gh attestation verify`; two runs produce identical ISO hashes — **pipeline landed 2026-09-27; validated with `v0.1.0-rc.1`, then `v0.1.0`** |
 
 ### Phase 1 — Kernel Core
 | ID | Task | AC |
@@ -646,7 +649,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | in progress | P0.1–P0.7 done (ADR-0001 recorded 2026-09-27); only P0.8 (release pipeline) remains |
+| P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0` |
 | P1 Kernel Core | not started | |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |

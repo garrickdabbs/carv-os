@@ -15,6 +15,12 @@
 //! - `test [--host] [--kernel] [--integration] [--release] [--timeout SECS]`: the one command every
 //!   PR must pass — host unit tests, the in-kernel test binary under QEMU (`isa-debug-exit`), and
 //!   the boot smoke scenarios. With no selector, all three run.
+//! - `release-check [--tag vX.Y.Z[-pre]]`: verify the tag matches the workspace version and the
+//!   CHANGELOG has a section for it; prints `version=`/`prerelease=` (also to `$GITHUB_OUTPUT`).
+//!
+//! `run` and `smoke` accept `--iso PATH` to boot an existing image (e.g. a release artifact)
+//! instead of building one. ISO assembly honours `SOURCE_DATE_EPOCH` (defaulting to the commit
+//! time) so two builds of the same commit produce byte-identical images.
 
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(missing_docs)]
@@ -112,6 +118,7 @@ fn main() -> ExitCode {
         Some("docs-gate") => docs_gate(&args[1..]),
         Some("perf") => perf(&args[1..]),
         Some("test") => test(&args[1..]),
+        Some("release-check") => release_check(&args[1..]),
         Some("help") | None => {
             print_help();
             Ok(())
@@ -160,6 +167,10 @@ fn print_help() {
     println!(
         "                                   Host unit tests + in-kernel tests in QEMU + boot smoke (default: all)"
     );
+    println!(
+        "  release-check [--tag vX.Y.Z]      Tag ↔ Cargo version ↔ CHANGELOG consistency (release workflow gate)"
+    );
+    println!("    run/smoke --iso PATH           boot an existing image instead of building one");
 }
 
 // ---------------------------------------------------------------- build
@@ -345,6 +356,12 @@ fn assemble_iso(
 
     let iso = out_dir.join(iso_name);
     let mut xorriso = Command::new("xorriso");
+    // Reproducibility: pin every timestamp in the image to SOURCE_DATE_EPOCH (the commit time).
+    // The env var alone leaves file dates and the GPT/MBR ids derived from the source mtimes and
+    // "now"; --modification-date and --set_all_file_dates make them a function of the epoch.
+    let epoch = source_date_epoch();
+    let stamp = iso_timestamp(epoch);
+    xorriso.env("SOURCE_DATE_EPOCH", epoch.to_string());
     xorriso
         .args([
             "-as",
@@ -368,6 +385,9 @@ fn assemble_iso(
             "--efi-boot-image",
             "--protective-msdos-label",
         ])
+        .arg(format!("--modification-date={stamp}00"))
+        .arg("--set_all_file_dates")
+        .arg(format!("@{epoch}"))
         .arg(&root)
         .arg("-o")
         .arg(&iso);
@@ -378,8 +398,62 @@ fn assemble_iso(
         let mut bios_install = Command::new(&installer);
         bios_install.arg("bios-install").arg(&iso);
         run_tool(&mut bios_install, "limine bios-install")?;
+        // bios-install writes a pseudorandom MBR disk id (limine.c: srand(time(NULL))). It is only
+        // an identifier, so overwrite it with the epoch to keep the image reproducible.
+        write_mbr_disk_id(&iso, epoch as u32)?;
     }
     Ok(iso)
+}
+
+/// Offset of the 4-byte MBR disk identifier (a.k.a. NT disk signature) inside sector 0.
+const MBR_DISK_ID_OFFSET: u64 = 0x1B8;
+
+fn write_mbr_disk_id(image: &Path, id: u32) -> Result<(), String> {
+    use std::io::{Seek, SeekFrom, Write};
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .open(image)
+        .map_err(|e| format!("opening {}: {e}", image.display()))?;
+    f.seek(SeekFrom::Start(MBR_DISK_ID_OFFSET))
+        .and_then(|_| f.write_all(&id.to_le_bytes()))
+        .map_err(|e| format!("writing MBR disk id to {}: {e}", image.display()))
+}
+
+/// `YYYYMMDDhhmmss` (UTC) for a Unix timestamp; the format xorriso's date options take.
+fn iso_timestamp(epoch: u64) -> String {
+    let (y, m, d, hh, mm, ss) = utc_civil(epoch);
+    format!("{y:04}{m:02}{d:02}{hh:02}{mm:02}{ss:02}")
+}
+
+/// Unix time → proleptic Gregorian UTC (Howard Hinnant's days-to-civil algorithm).
+fn utc_civil(epoch: u64) -> (u64, u64, u64, u64, u64, u64) {
+    let days = epoch / 86_400;
+    let rem = epoch % 86_400;
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u64;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u64;
+    let y = if m <= 2 { y + 1 } else { y } as u64;
+    (y, m, d, rem / 3600, (rem % 3600) / 60, rem % 60)
+}
+
+/// `SOURCE_DATE_EPOCH` from the environment, else the HEAD commit's timestamp, else 0.
+fn source_date_epoch() -> u64 {
+    if let Some(v) = env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+    {
+        return v;
+    }
+    git(&workspace_root(), &["log", "-1", "--format=%ct"])
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
 }
 
 /// Runs an external tool with its output captured. Output is shown when the tool fails (so
@@ -431,6 +505,8 @@ struct RunOpts {
     debug: bool,
     timeout: Option<Duration>,
     cmdline: String,
+    /// Boot this image instead of building one.
+    iso: Option<PathBuf>,
 }
 
 fn parse_run_opts(args: &[String]) -> Result<RunOpts, String> {
@@ -440,6 +516,7 @@ fn parse_run_opts(args: &[String]) -> Result<RunOpts, String> {
         debug: false,
         timeout: None,
         cmdline: String::new(),
+        iso: None,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -447,6 +524,7 @@ fn parse_run_opts(args: &[String]) -> Result<RunOpts, String> {
             "--release" => opts.release = true,
             "--bios" => opts.bios = true,
             "--debug" => opts.debug = true,
+            "--iso" => opts.iso = Some(PathBuf::from(it.next().ok_or("--iso needs a path")?)),
             "--cmdline" => {
                 opts.cmdline = it.next().ok_or("--cmdline needs a value")?.clone();
             }
@@ -466,7 +544,16 @@ fn parse_run_opts(args: &[String]) -> Result<RunOpts, String> {
 
 fn run(args: &[String]) -> Result<(), String> {
     let opts = parse_run_opts(args)?;
-    let iso = build_image(opts.release, &opts.cmdline)?;
+    let iso = match &opts.iso {
+        Some(p) => {
+            if !opts.cmdline.is_empty() {
+                return Err("--cmdline cannot be combined with --iso (the command line is baked into the image)".into());
+            }
+            ensure_data_disk()?;
+            p.clone()
+        }
+        None => build_image(opts.release, &opts.cmdline)?,
+    };
     let mut qemu = qemu_command(&iso, &opts)?;
 
     println!("qemu: {}", shell_words(&qemu));
@@ -621,9 +708,11 @@ fn smoke(args: &[String]) -> Result<(), String> {
     let mut release = false;
     let mut timeout = Duration::from_secs(60);
     let mut it = args.iter();
+    let mut iso: Option<PathBuf> = None;
     while let Some(a) = it.next() {
         match a.as_str() {
             "--release" => release = true,
+            "--iso" => iso = Some(PathBuf::from(it.next().ok_or("--iso needs a path")?)),
             "--timeout" => {
                 let secs = it
                     .next()
@@ -636,23 +725,40 @@ fn smoke(args: &[String]) -> Result<(), String> {
         }
     }
 
-    run_smoke(release, timeout)
+    run_smoke(release, timeout, iso.as_deref())
 }
 
-/// Runs every smoke scenario; used by both `smoke` and `test --integration`.
-fn run_smoke(release: bool, timeout: Duration) -> Result<(), String> {
+/// Runs every smoke scenario; used by both `smoke` and `test --integration`. With `iso`, boots
+/// that image instead of building one and skips scenarios that need their own kernel command line.
+fn run_smoke(release: bool, timeout: Duration, iso: Option<&Path>) -> Result<(), String> {
     let log_dir = target_dir().join("smoke");
     fs::create_dir_all(&log_dir).map_err(|e| format!("creating {}: {e}", log_dir.display()))?;
 
     let mut failures = Vec::new();
+    let mut skipped = 0usize;
     for sc in SMOKE_SCENARIOS {
-        let iso = build_image(release, sc.cmdline)?;
+        let iso = match iso {
+            Some(p) if sc.cmdline.is_empty() => {
+                ensure_data_disk()?;
+                p.to_path_buf()
+            }
+            Some(_) => {
+                println!(
+                    "smoke: {:<6} SKIP  (needs its own cmdline; not applicable to --iso)",
+                    sc.name
+                );
+                skipped += 1;
+                continue;
+            }
+            None => build_image(release, sc.cmdline)?,
+        };
         let opts = RunOpts {
             release,
             bios: sc.bios,
             debug: false,
             timeout: Some(timeout),
             cmdline: sc.cmdline.to_string(),
+            iso: None,
         };
         let mut cmd = qemu_command(&iso, &opts)?;
         let started = Instant::now();
@@ -684,7 +790,12 @@ fn run_smoke(release: bool, timeout: Duration) -> Result<(), String> {
         }
     }
     if failures.is_empty() {
-        println!("smoke: all {} scenarios passed", SMOKE_SCENARIOS.len());
+        let ran = SMOKE_SCENARIOS.len() - skipped;
+        if skipped == 0 {
+            println!("smoke: all {ran} scenarios passed");
+        } else {
+            println!("smoke: {ran} scenarios passed, {skipped} skipped");
+        }
         Ok(())
     } else {
         Err(format!(
@@ -984,6 +1095,7 @@ fn perf(args: &[String]) -> Result<(), String> {
             debug: false,
             timeout: Some(BOOT_TO_BANNER_MAX * 4),
             cmdline: String::new(),
+            iso: None,
         };
         let mut cmd = qemu_command(&iso, &opts)?;
         let (out, timing) = boot_timing(
@@ -1213,7 +1325,7 @@ fn test(args: &[String]) -> Result<(), String> {
     if opts.integration {
         results.push((
             "boot smoke (UEFI, BIOS, panic)",
-            run_smoke(opts.release, opts.timeout).map(|()| "3 scenarios passed".to_string()),
+            run_smoke(opts.release, opts.timeout, None).map(|()| "3 scenarios passed".to_string()),
         ));
     }
 
@@ -1271,6 +1383,7 @@ fn kernel_tests(opts: &TestOpts) -> Result<String, String> {
         debug: false,
         timeout: Some(opts.timeout),
         cmdline: String::new(),
+        iso: None,
     };
     let mut cmd = qemu_command(&iso, &run_opts)?;
     let (output, status) = run_qemu_until_exit(&mut cmd, opts.timeout)?;
@@ -1422,6 +1535,99 @@ fn run_qemu_until_exit(
         out.extend_from_slice(&chunk);
     }
     Ok((String::from_utf8_lossy(&out).into_owned(), status))
+}
+
+// ---------------------------------------------------------------- release-check
+
+/// Verifies release consistency: the tag is `v<version>` (optionally `-<pre-release>`), where
+/// `<version>` is `[workspace.package] version`, and `CHANGELOG.md` has a `## [<version>]`
+/// section. Prints `version=` and `prerelease=`, also appending them to `$GITHUB_OUTPUT`.
+fn release_check(args: &[String]) -> Result<(), String> {
+    let mut tag: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--tag" => tag = Some(it.next().ok_or("--tag needs a value")?.clone()),
+            other => return Err(format!("unknown release-check option `{other}`")),
+        }
+    }
+    let tag = tag
+        .or_else(|| env::var("GITHUB_REF_NAME").ok())
+        .ok_or("release-check needs --tag vX.Y.Z (or GITHUB_REF_NAME)")?;
+
+    let manifest = fs::read_to_string(workspace_root().join("Cargo.toml"))
+        .map_err(|e| format!("reading Cargo.toml: {e}"))?;
+    let version =
+        workspace_version(&manifest).ok_or("no [workspace.package] version in Cargo.toml")?;
+    let changelog = fs::read_to_string(workspace_root().join("CHANGELOG.md"))
+        .map_err(|e| format!("reading CHANGELOG.md: {e}"))?;
+
+    let info = check_release(&tag, &version, &changelog)?;
+    let out = format!("version={version}\nprerelease={}\n", info.prerelease);
+    print!("{out}");
+    if let Ok(path) = env::var("GITHUB_OUTPUT") {
+        use std::io::Write;
+        if let Ok(mut f) = fs::OpenOptions::new().append(true).create(true).open(path) {
+            let _ = f.write_all(out.as_bytes());
+        }
+    }
+    println!("release-check: OK ({tag} ↔ {version}, changelog section present)");
+    Ok(())
+}
+
+struct ReleaseInfo {
+    prerelease: bool,
+}
+
+/// Pure rule check behind `release_check`, unit-tested.
+fn check_release(tag: &str, version: &str, changelog: &str) -> Result<ReleaseInfo, String> {
+    let rest = tag
+        .strip_prefix('v')
+        .ok_or_else(|| format!("tag `{tag}` must start with `v`"))?;
+    let (base, pre) = match rest.split_once('-') {
+        Some((b, p)) => (b, Some(p)),
+        None => (rest, None),
+    };
+    if base != version {
+        return Err(format!(
+            "tag `{tag}` does not match [workspace.package] version {version}; bump Cargo.toml in the release PR"
+        ));
+    }
+    if let Some(p) = pre
+        && (p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '.'))
+    {
+        return Err(format!(
+            "pre-release suffix `{p}` must be alphanumeric/dots (e.g. rc.1)"
+        ));
+    }
+    let heading = format!("## [{version}]");
+    if !changelog.lines().any(|l| l.starts_with(&heading)) {
+        return Err(format!(
+            "CHANGELOG.md has no `{heading} - YYYY-MM-DD` section; move the Unreleased entries under it"
+        ));
+    }
+    // 0.y.z is pre-1.0 and always published as a GitHub pre-release; so is any -suffix tag.
+    let prerelease = pre.is_some() || version.starts_with("0.");
+    Ok(ReleaseInfo { prerelease })
+}
+
+/// Extracts `version = "..."` from the `[workspace.package]` table of a Cargo.toml.
+fn workspace_version(manifest: &str) -> Option<String> {
+    let mut in_table = false;
+    for line in manifest.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_table = t == "[workspace.package]";
+            continue;
+        }
+        if in_table && let Some(rest) = t.strip_prefix("version") {
+            let rest = rest.trim_start();
+            if let Some(v) = rest.strip_prefix('=') {
+                return Some(v.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------- shared
@@ -1591,6 +1797,55 @@ mod tests {
     fn qemu_exit_codes_match_kernel() {
         assert_eq!(QEMU_EXIT_TESTS_PASSED, 33);
         assert_eq!(QEMU_EXIT_TESTS_FAILED, 35);
+    }
+
+    #[test]
+    fn release_rules() {
+        let cl = "# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-09-27\n### Added\n- stuff\n";
+        // 0.y.z is pre-1.0, so it is always published as a pre-release.
+        assert!(check_release("v0.1.0", "0.1.0", cl).unwrap().prerelease);
+        assert!(
+            check_release("v0.1.0-rc.1", "0.1.0", cl)
+                .unwrap()
+                .prerelease
+        );
+        assert!(
+            check_release("v0.2.0", "0.1.0", cl).is_err(),
+            "tag/version mismatch"
+        );
+        assert!(check_release("0.1.0", "0.1.0", cl).is_err(), "missing v");
+        assert!(
+            check_release("v0.1.0", "0.1.0", "## [Unreleased]\n").is_err(),
+            "no changelog section"
+        );
+        assert!(
+            check_release("v0.1.0-", "0.1.0", cl).is_err(),
+            "empty suffix"
+        );
+        assert!(
+            check_release("v0.1.0-rc 1", "0.1.0", cl).is_err(),
+            "bad suffix"
+        );
+        assert!(
+            !check_release("v1.2.3", "1.2.3", "## [1.2.3] - 2027-01-01\n")
+                .unwrap()
+                .prerelease
+        );
+    }
+
+    #[test]
+    fn workspace_version_parsed() {
+        let m = "[workspace]\nmembers = [\"a\"]\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[profile.dev]\npanic = \"abort\"\n";
+        assert_eq!(workspace_version(m).as_deref(), Some("0.1.0"));
+        assert_eq!(workspace_version("[package]\nversion = \"9.9.9\"\n"), None);
+    }
+
+    #[test]
+    fn iso_timestamps_are_utc_civil() {
+        assert_eq!(utc_civil(0), (1970, 1, 1, 0, 0, 0));
+        assert_eq!(utc_civil(951_782_400), (2000, 2, 29, 0, 0, 0)); // leap day
+        assert_eq!(iso_timestamp(1_790_493_059), "20260927071059");
+        assert_eq!(iso_timestamp(4_102_444_799), "20991231235959");
     }
 
     #[test]

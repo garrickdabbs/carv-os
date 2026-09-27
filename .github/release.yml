@@ -1,0 +1,9 @@
+# Categories for `gh release create --generate-notes`.
+changelog:
+  exclude:
+    authors: []
+  categories:
+    - title: Dependencies
+      labels: ["kind:deps", "dependencies"]
+    - title: Changes
+      labels: ["*"]
