@@ -8,7 +8,7 @@ default-members = ["xtask"]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-repository = "https://github.com/garrickdabbs/tally"
+repository = "https://github.com/garrickdabbs/carv-os"
 
 [profile.dev]
 panic = "abort"

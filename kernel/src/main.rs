@@ -1,4 +1,4 @@
-//! stock: the Tally OS microkernel.
+//! chisel: the CarvOS microkernel.
 //!
 //! For now this only proves the kernel builds and links in the higher half.
 //! Boot (P0.2) and serial output (P0.3) come next.

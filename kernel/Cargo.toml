@@ -1,12 +1,12 @@
 [package]
-name = "stock"
-description = "The Tally OS microkernel"
+name = "chisel"
+description = "chisel: the CarvOS microkernel"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "stock"
+name = "chisel"
 test = false
 bench = false
 

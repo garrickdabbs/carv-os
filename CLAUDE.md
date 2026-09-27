@@ -1,6 +1,6 @@
-# Tally OS — Agent Instructions
+# CarvOS — Agent Instructions
 
-Hobby capability-microkernel OS in Rust for x86_64, tested in QEMU. The full plan is in `docs/PLAN.md`.
+CarvOS (CARV: Capability Authority & Resource Versioning) is a hobby capability-microkernel OS in Rust for x86_64, tested in QEMU. Kernel crate: `chisel`. Naming conventions are in PLAN.md (top). The full plan is in `docs/PLAN.md`.
 Read it before starting any task.
 
 ## Commands
@@ -13,7 +13,7 @@ Read it before starting any task.
 - One task ID per branch/PR (`p2.7-ipc`). Stay inside the directories your task names.
 - Put logic in pure `crates/*` libraries (host-testable) whenever possible; the kernel and services are thin glue.
 - Every `unsafe` block needs a `// SAFETY:` comment explaining why it is sound.
-- No changes to `docs/abi.md` or `crates/tally-abi` after the ABI freeze (P2.10) without a new ADR in `docs/adr/`.
+- No changes to `docs/abi.md` or `crates/carv-abi` after the ABI freeze (P2.10) without a new ADR in `docs/adr/`.
 - No ambient authority: never add a global path namespace, a "root bypass", or a syscall that skips capability checks.
 - Every allocation path must charge a Budget.
 - Every QEMU test run has a timeout; a hang counts as a failure.
