@@ -741,13 +741,23 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
         name: "uefi",
         bios: false,
         cmdline: "",
-        expect: &["CarvOS chisel v", "bootloader: Limine", "halting"],
+        expect: &[
+            "CarvOS chisel v",
+            "bootloader: Limine",
+            "LAPIC timer ticking",
+            "halting",
+        ],
     },
     Scenario {
         name: "bios",
         bios: true,
         cmdline: "",
-        expect: &["CarvOS chisel v", "bootloader: Limine", "halting"],
+        expect: &[
+            "CarvOS chisel v",
+            "bootloader: Limine",
+            "LAPIC timer ticking",
+            "halting",
+        ],
     },
     Scenario {
         name: "panic",

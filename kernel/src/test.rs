@@ -304,3 +304,21 @@ fn heap_returns_memory_after_drop() {
         "allocator usage must return to baseline"
     );
 }
+
+#[test_case]
+fn lapic_timer_ticks_at_one_khz() {
+    use crate::arch::x86_64::{self, apic, pit};
+    assert!(
+        !x86_64::interrupts_enabled(),
+        "tests run with interrupts off"
+    );
+    let before = apic::ticks();
+    x86_64::enable_interrupts();
+    pit::busy_wait_ms(100);
+    x86_64::disable_interrupts();
+    let ticks = apic::ticks() - before;
+    assert!(
+        (90..=110).contains(&ticks),
+        "expected ~100 ticks in 100 ms at 1 kHz, got {ticks}"
+    );
+}

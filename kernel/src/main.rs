@@ -7,7 +7,8 @@
 //! (`cargo xtask test --kernel`) `kmain` runs the in-kernel tests instead and exits QEMU with a
 //! pass/fail code. The physical frame allocator is built from the memory map (P1.2) and the
 //! bootloader's page tables are adopted for map/unmap/translate (P1.3), and a 1 MiB kernel heap
-//! backs `alloc` (P1.4). Cmdline words `page-fault-test`, `stack-overflow-test` and `oom-test` exercise the page-fault
+//! backs `alloc` (P1.4). The legacy PICs are masked and the local APIC timer ticks at 1 kHz on
+//! vector 32 (P1.5). Cmdline words `page-fault-test`, `stack-overflow-test` and `oom-test` exercise the page-fault
 //! handler and the guard-page → double-fault path.
 
 #![no_std]
@@ -153,6 +154,17 @@ extern "C" fn kmain() -> ! {
             mm::heap::HEAP_BASE,
             heap.used
         );
+        arch::x86_64::pic::remap_and_mask();
+        let apic = arch::x86_64::apic::init();
+        kprintln!(
+            "  apic: xAPIC id {} at {:#x} (mapped at {:#x}); timer {} ticks/ms (÷16), periodic at {} Hz on vector {}; PICs masked",
+            apic.id,
+            apic.phys_base,
+            mm::paging::KERNEL_MMIO_BASE,
+            apic.ticks_per_ms,
+            arch::x86_64::apic::TIMER_HZ,
+            arch::x86_64::apic::TIMER_VECTOR
+        );
         kprintln!(
             "  frames: {} free of {} ({} MiB); bitmap {} KiB at {:#x}; self-check ok ({:#x})",
             layout.free_frames,
@@ -186,6 +198,13 @@ extern "C" fn kmain() -> ! {
         force_oom();
     }
 
+    // With every table in place, take interrupts and prove the timer runs before idling.
+    arch::x86_64::enable_interrupts();
+    arch::x86_64::pit::busy_wait_ms(100);
+    kprintln!(
+        "  timer: {} ticks in 100 ms; LAPIC timer ticking",
+        arch::x86_64::apic::ticks()
+    );
     kprintln!("chisel: nothing more to do yet; halting");
     halt_forever()
 }

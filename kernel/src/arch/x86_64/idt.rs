@@ -4,14 +4,15 @@
 //! and #VC for CET / hypervisor environments) gets a handler, so a fault always produces a
 //! readable message on the serial console instead of a silent triple fault.
 //! The double-fault handler runs on its own IST stack (see `gdt.rs`) and is therefore reachable
-//! even when the faulting code's stack is unusable. Hardware interrupts (vectors 32+) are wired up
-//! with the APIC in P1.5.
+//! even when the faulting code's stack is unusable. Vector 32 is the local APIC timer and 0xFF its
+//! spurious vector (P1.5); device IRQs follow with the I/O APIC in P2.8.
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use x86_64::registers::control::Cr2;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
+use super::apic;
 use super::gdt::DOUBLE_FAULT_IST_INDEX;
 use crate::sync::StaticCell;
 use crate::{kprintln, serial};
@@ -59,6 +60,9 @@ pub fn init() {
         idt.vmm_communication_exception
             .set_handler_fn(vmm_communication_exception);
         idt.security_exception.set_handler_fn(security_exception);
+
+        idt[apic::TIMER_VECTOR].set_handler_fn(apic::timer_interrupt);
+        idt[apic::SPURIOUS_VECTOR].set_handler_fn(apic::spurious_interrupt);
 
         IDT.get().load();
     }

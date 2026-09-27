@@ -7,6 +7,12 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Added
+- P1.5: local APIC + timer — the legacy 8259 PICs are remapped and masked (`arch::x86_64::pic`), the xAPIC register page is
+  mapped uncached at `paging::KERNEL_MMIO_BASE` (new `paging::map_mmio`; Limine's direct map does not cover device
+  memory) and enabled (`arch::x86_64::apic`), its timer is calibrated against PIT channel 2
+  (`arch::x86_64::pit::busy_wait_ms`) and runs periodic at 1 kHz on vector 32 with a spurious-vector handler;
+  boot enables interrupts, prints the tick count after 100 ms and the UEFI/BIOS smoke scenarios expect it;
+  an in-kernel test counts 100 ± 10 ticks over a PIT-timed 100 ms wait.
 - P1.4: kernel heap — `kernel::mm::heap` maps 1 MiB of fresh frames at `KERNEL_DYNAMIC_BASE + 256 MiB` and
   installs `linked_list_allocator` (no default features) as the `#[global_allocator]` behind the kernel spin lock
   with interrupts off; `alloc` is enabled in `chisel`; boot prints the heap layout; in-kernel tests exercise
