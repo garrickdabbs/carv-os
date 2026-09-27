@@ -31,6 +31,8 @@ jobs:
     name: build release artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read # everything that compiles or boots code runs with a read-only token
     outputs:
       prerelease: ${{ steps.check.outputs.prerelease }}
       version: ${{ steps.check.outputs.version }}
@@ -65,14 +67,25 @@ jobs:
           cp target/carv-os.iso "dist/carv-os-${TAG}-x86_64.iso"
           cp target/x86_64-unknown-none/release/chisel "dist/chisel-${TAG}.elf"
           sha256sum target/carv-os.iso | cut -d' ' -f1 > /tmp/iso1.sha256
-      - name: reproducible build, pass 2 (clean kernel + ISO, must be byte-identical)
+      - name: reproducible build, pass 2 (other directory, fresh CARGO_HOME; must be byte-identical)
         run: |
+          # Proves the image does not depend on where it was built (#29): the release profile's
+          # trim-paths keeps checkout, registry and sysroot paths out of the kernel, and the ISO
+          # carries a debuginfo-stripped copy. Both the ISO and the unstripped ELF must match.
+          set -euo pipefail
+          sha256sum target/x86_64-unknown-none/release/chisel | cut -d' ' -f1 > /tmp/elf1.sha256
+          other="$RUNNER_TEMP/carv-os-elsewhere"
+          git clone -q "$GITHUB_WORKSPACE" "$other"
+          git -C "$other" checkout -q "$(git rev-parse HEAD)"
+          export CARGO_HOME="$RUNNER_TEMP/cargo-home-2"
           export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
-          rm -rf target/x86_64-unknown-none target/iso_root target/carv-os.iso
-          cargo xtask image --release
-          sha256sum target/carv-os.iso | cut -d' ' -f1 > /tmp/iso2.sha256
-          echo "pass 1: $(cat /tmp/iso1.sha256)"; echo "pass 2: $(cat /tmp/iso2.sha256)"
-          cmp /tmp/iso1.sha256 /tmp/iso2.sha256 || { echo "::error::ISO is not reproducible"; exit 1; }
+          (cd "$other" && cargo xtask image --release)
+          sha256sum "$other/target/carv-os.iso" | cut -d' ' -f1 > /tmp/iso2.sha256
+          sha256sum "$other/target/x86_64-unknown-none/release/chisel" | cut -d' ' -f1 > /tmp/elf2.sha256
+          echo "ISO pass 1: $(cat /tmp/iso1.sha256)"; echo "ISO pass 2: $(cat /tmp/iso2.sha256)"
+          echo "ELF pass 1: $(cat /tmp/elf1.sha256)"; echo "ELF pass 2: $(cat /tmp/elf2.sha256)"
+          cmp /tmp/iso1.sha256 /tmp/iso2.sha256 || { echo "::error::ISO is not reproducible across directories"; exit 1; }
+          cmp /tmp/elf1.sha256 /tmp/elf2.sha256 || { echo "::error::kernel ELF is not reproducible across directories"; exit 1; }
 
       - name: full test suite at this commit
         run: cargo xtask test --release --timeout 120

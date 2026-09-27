@@ -7,6 +7,9 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Changed
+- The Claude Code settings file (`.claude/settings.json`, a Stop hook running the docs gate) is no longer
+  committed and `.claude/` is gitignored: a shared hook file runs shell commands on every contributor's machine.
+  Documentation-with-code is enforced by the `docs` CI check alone; a local hook is an optional personal setting.
 - Review follow-ups (threads on #7, #24, #25, #30, #32, #33, #37, #39): the docs gate runs from the base
   branch's `xtask`, checks that `## [Unreleased]` actually gained content, requires a *new* ADR for
   `docs/abi.md`, and only honours a skip marker with a ≥ 20-character reason; `cargo deny` treats duplicate
@@ -24,6 +27,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - Release and nightly workflows split into a read-only build job and a minimal-permission publish job; the SLSA
   provenance is now also published as `carv-os-<tag>.intoto.jsonl` and `carv-os-<tag>.provenance.sigstore.json`
   release assets (#35). Fuller `.gitignore`; `CONTRIBUTING.md` added (#34, #35).
+- Reproducible builds across machines (#29): the release profile enables cargo's `trim-paths = "all"`, so no
+  checkout, registry or sysroot path reaches the kernel ELF, and `cargo xtask image --release` strips debuginfo
+  from the ISO's kernel copy with the toolchain's `llvm-objcopy`. The release workflow's second pass now builds
+  from a different directory with a fresh `CARGO_HOME` and requires identical ISO and kernel hashes.
+- Release workflow: the build job declares its read-only `contents: read` token explicitly (#35).
 
 ### Added
 - P1.3: paging — `kernel::mm::paging` adopts Limine's page tables through the HHDM (`OffsetPageTable`) with
@@ -40,6 +48,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   scenario prove the double-fault path; in-kernel tests cover `int3` and the loaded selectors.
 
 ### Fixed
+- In-kernel paging tests return their frame to the allocator before panicking when a `map` unexpectedly fails,
+  matching the ownership discipline used everywhere else (#43).
 - `carv-frames::free_range` guards its scan-hint update against out-of-range starts explicitly (the hint could
   never actually move past the bitmap; a test now proves the out-of-range case is harmless) (#38).
 - `release-check` fails instead of silently continuing when `GITHUB_OUTPUT` cannot be written, and the release
