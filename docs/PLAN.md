@@ -688,7 +688,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | Phase | Status | Notes |
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
-| P1 Kernel Core | **done** | P1.1–P1.5 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz, ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
+| P1 Kernel Core | **done** | P1.1–P1.7 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz, ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |
 | P4 Drivers | not started | |
