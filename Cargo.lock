@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "stock"
+name = "chisel"
 version = "0.0.1"
 
 [[package]]
