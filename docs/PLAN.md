@@ -306,9 +306,10 @@ locations (override with `CARV_OVMF_CODE`/`CARV_OVMF_VARS`) and falls back to `-
    Pure logic, run in milliseconds. Property tests with `proptest` for the cap derivation tree
    (revoke removes every descendant), vstore (crash at any write, then recover to the last commit),
    and CBOR round-trips.
-2. **In-kernel tests**: a custom test framework (`#![feature(custom_test_frameworks)]`) boots the
-   kernel in QEMU, runs `#[test_case]` functions, and exits through `isa-debug-exit` with a pass or
-   fail code. Covers paging, allocator, IPC, scheduler, and budget enforcement.
+2. **In-kernel tests**: a custom test framework (`#![feature(custom_test_frameworks)]`, `kernel/src/test.rs`)
+   boots the kernel in QEMU, runs `#[test_case]` functions, and exits through `isa-debug-exit` with a pass
+   (33) or fail (35) code that `cargo xtask test --kernel` maps to success/failure. Will cover paging,
+   allocator, IPC, scheduler, and budget enforcement as they land.
 3. **System integration tests**: `tests/integration` boots the full image, talks to the serial shell
    (pexpect in Python, or Rust `rexpect`), sends commands, and checks the output. The shell's
    `--json` mode makes these checks exact rather than regex-based. Each phase adds scenarios (see
@@ -322,7 +323,7 @@ workloads, reboots, and checks that vstore mounts at a consistent commit.
 **CI:** every layer runs on GitHub Actions; the workflows, security controls, nightly jobs, and
 release pipeline are specified in §7.
 
-**Single command:** `cargo xtask test` runs layers 1–3. Agents must run it before claiming a task is done.
+**Single command:** `cargo xtask test` runs layers 1–3 (`--host`, `--kernel`, `--integration` select a subset). Agents must run it before claiming a task is done.
 
 ---
 
@@ -362,7 +363,7 @@ history. All trigger on `pull_request`, `push` to `main`, `merge_group` and `wor
 | Workflow (badge) | Job (required check) | What it does | Timeout |
 |---|---|---|---|
 | **Build** `build.yml` | `build` | `cargo fmt --check`; clippy `-D warnings` for host crates *and* `-p chisel --target x86_64-unknown-none`; `cargo xtask build` debug and `--release` (higher-half layout verified); `cargo test --workspace --locked`; `cargo xtask image --release`; ISO uploaded as a 7-day artifact on `main` | 20 min |
-| **CI** `ci.yml` | `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask smoke --timeout 120` boots UEFI, BIOS and `panic-test` scenarios and asserts the serial output; uploads `target/smoke/*.log`. `cargo xtask test` (in-kernel + integration, layers 2–3) joins here in P0.4 | 30 min |
+| **CI** `ci.yml` | `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask test --timeout 120`: host unit tests, the in-kernel test kernel booted in QEMU (`isa-debug-exit` 33/35), and the UEFI/BIOS/`panic-test` smoke scenarios with serial output asserted; uploads `target/test/*.log` and `target/smoke/*.log`. Job name stays `boot-smoke` (required check) | 30 min |
 | **Security** `security.yml` | `security` | `cargo deny check` (advisories, licenses, bans, sources); `cargo audit --deny warnings` with a fresh RustSec DB; clippy with only `undocumented_unsafe_blocks` as an error; unsafe inventory in the job summary; every `uses:` pinned to a 40-hex SHA; no `write-all` permissions. Also runs **weekly** so new advisories surface without a code change | 15 min |
 | **Docs** `docs.yml` | `docs` | `cargo xtask docs-gate --base origin/<base>` (PRs; skipped for Dependabot and with the documented skip marker); rustdoc with `RUSTDOCFLAGS=-D warnings` (crate roots deny `missing_docs`); `lychee --offline` checks every local Markdown link and anchor | 15 min |
 | **Performance** `perf.yml` | `perf` | `cargo xtask perf --runs 5`: release-kernel loaded size, ISO size, boot-to-banner and banner-to-halt (median, KVM) against budgets in `xtask`; over budget fails; report to the job summary | 30 min |
@@ -419,7 +420,7 @@ protection, Scorecard and rulesets are all available at no cost.
   above; the logic is a pure, unit-tested function in `xtask`). It runs twice: in CI on every PR,
   and as a **Claude Code Stop hook** (`.claude/settings.json`) so an agent cannot end a task with
   undocumented code. Escape hatch: `docs-gate: skip` plus a reason in the PR body.
-- **Per-PR:** layer 1 via `build.yml`, layers 2–3 via `ci.yml` (boot smoke now, `cargo xtask test` from P0.4), plus the Security, Docs and Performance workflows. Integration tests talk to the shell in `--json` mode so
+- **Per-PR:** layer 1 via `build.yml` and `ci.yml`, layers 2–3 via `ci.yml` (`cargo xtask test`), plus the Security, Docs and Performance workflows. Integration tests talk to the shell in `--json` mode so
   assertions are exact. Failures always upload the serial log, QEMU log, and the ISO that failed.
 - **Nightly — `.github/workflows/nightly.yml`** (`schedule: cron '0 6 * * *'` + `workflow_dispatch`):
   long-running and drift-detecting jobs that are too slow or too noisy for PRs:
@@ -483,7 +484,7 @@ phase's interfaces are frozen.
 | P0.1 | Workspace, `rust-toolchain.toml`, `.cargo/config.toml`, target `x86_64-unknown-none`, kernel linker script (higher half) | `cargo xtask build` succeeds |
 | P0.2 | `xtask`: build, fetch/pin Limine, make ISO, run QEMU, detect KVM | `cargo xtask run` boots to the Limine menu, then the kernel |
 | P0.3 | Serial driver (16550) + `kprintln!` macro + panic handler printing to serial | Serial shows `CarvOS chisel v0.0.1 booting` |
-| P0.4 | `isa-debug-exit` + in-kernel test framework | `cargo xtask test` runs a trivial test, QEMU exits with the pass code |
+| P0.4 | `isa-debug-exit` + in-kernel test framework | `cargo xtask test` runs a trivial test, QEMU exits with the pass code — **done 2026-09-27**: 5 `#[test_case]`s, exit 33/35 mapped by `xtask`, `test` runs host + kernel + smoke layers |
 | P0.5 | `ci.yml` per §7.2: lint (fmt, clippy both targets, doc, `cargo deny`), host tests (nextest + JUnit), kernel tests and integration tests in QEMU with KVM enabled, `all-green` gate; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows a single required `all-green` check; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR |
 | P0.6 | `README.md` (build, run, verify-a-release sections), `docs/adr/0001-microkernel-rust-x86_64.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE` | Files exist; README badges for CI and Scorecard render |
 | P0.7 | Repo governance per §7.1: `main` ruleset (PR + `all-green` required, linear history, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board, fine-grained PAT for agents | Direct push to `main` is rejected; a PR without green CI can't merge; agent token can't merge |
@@ -645,7 +646,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | in progress | P0.1–P0.3 done; P0.5 done (Build/CI/Security/Docs/Performance/CodeQL/Scorecard workflows); P0.6 done except ADR-0001; P0.7 ruleset created 2026-09-27; P0.8 not started |
+| P0 Scaffolding & Boot | in progress | P0.1–P0.5 done; P0.6 done except ADR-0001; P0.7 ruleset live (2026-09-27); P0.8 not started |
 | P1 Kernel Core | not started | |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |

@@ -10,7 +10,7 @@ Read it before starting any task.
 - `cargo xtask smoke [--release] [--timeout SECS]` — boot UEFI, BIOS and panic scenarios in QEMU and check serial output; logs in `target/smoke/`
 - `cargo xtask docs-gate [--base REF]` — fail (exit 2) if code changed without documentation; runs in CI and as the Stop hook in `.claude/settings.json`
 - `cargo xtask perf [--runs N]` — size and boot-time budgets (release build, median of N boots); CI fails a PR that exceeds them, so if you grow the kernel deliberately, raise the budget constants in `xtask` in the same PR and say why
-- `cargo xtask test` — host unit tests + in-kernel tests + QEMU integration tests (arrives in P0.4). **Must pass before any PR.** Until then: `cargo test --workspace`, `cargo xtask smoke`, `cargo xtask perf`, clippy, fmt, `cargo deny check`.
+- `cargo xtask test [--host] [--kernel] [--integration]` — host unit tests + in-kernel `#[test_case]` tests booted in QEMU (`isa-debug-exit`) + boot smoke. **Must pass before any PR.** Also run `cargo xtask perf`, clippy (host: `--workspace --exclude chisel`; kernel: `-p chisel --target x86_64-unknown-none`), fmt, `cargo deny check`.
 - `cargo xtask gdb` — boot paused with gdb stub attached
 
 ## Rules
@@ -20,7 +20,7 @@ Read it before starting any task.
 - No changes to `docs/abi.md` or `crates/carv-abi` after the ABI freeze (P2.10) without a new ADR in `docs/adr/`.
 - No ambient authority: never add a global path namespace, a "root bypass", or a syscall that skips capability checks.
 - Every allocation path must charge a Budget.
-- Every QEMU test run has a timeout; a hang counts as a failure.
+- Every QEMU test run has a timeout; a hang counts as a failure. New kernel behaviour gets a `#[test_case]` in `kernel/src/test.rs` (or a `test` module next to the code); tests that need a fresh boot or a panic go in the `xtask` smoke scenarios.
 - Don't mark a task done without pasting `cargo xtask test` output. If blocked on a design question, write it up and stop.
 - Update the status table in `docs/PLAN.md` §11 when you open a PR.
 - clippy with `-D warnings` and `cargo fmt` must be clean.

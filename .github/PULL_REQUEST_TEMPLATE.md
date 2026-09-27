@@ -15,11 +15,11 @@
 - [ ] ADR added if an architectural decision or `docs/abi.md` changed
 
 ## Verification
-<!-- Paste real output. `cargo xtask test` once it exists (P0.4); until then the individual commands. -->
+<!-- Paste real output. -->
 ```
-$ cargo test --workspace
-$ cargo xtask smoke
-$ cargo clippy --workspace --all-targets -- -D warnings
+$ cargo xtask test
+$ cargo xtask perf
+$ cargo clippy --workspace --exclude chisel --all-targets -- -D warnings
 $ cargo clippy -p chisel --target x86_64-unknown-none -- -D warnings
 $ cargo fmt --all --check
 ```

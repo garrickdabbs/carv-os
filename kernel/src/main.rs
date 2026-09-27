@@ -1,8 +1,9 @@
 //! chisel: the CarvOS microkernel.
 //!
-//! P0.3 state: Limine boots us, the 16550 boot console comes up, we print the banner and what
+//! P0.4 state: Limine boots us, the 16550 boot console comes up, we print the banner and what
 //! the bootloader handed over, and halt. Kernel command line `panic-test` exercises the panic
-//! handler. GDT/IDT (P1.1) and the rest of the kernel core come next.
+//! handler. In test builds (`cargo xtask test --kernel`) `kmain` runs the in-kernel tests instead
+//! and exits QEMU with a pass/fail code. GDT/IDT (P1.1) and the rest of the kernel core come next.
 
 #![no_std]
 #![no_main]
@@ -10,6 +11,10 @@
 // Every `unsafe` block must carry a `// SAFETY:` comment (CLAUDE.md rule, enforced mechanically).
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(missing_docs)]
+// In-kernel tests: `#[test_case]` functions collected by the compiler and run by `test::runner`.
+#![cfg_attr(test, feature(custom_test_frameworks))]
+#![cfg_attr(test, test_runner(crate::test::runner))]
+#![cfg_attr(test, reexport_test_harness_main = "test_main")]
 
 use core::panic::PanicInfo;
 
@@ -22,6 +27,8 @@ use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 mod arch;
 mod serial;
 mod sync;
+#[cfg(test)]
+mod test;
 
 use arch::x86_64::halt_forever;
 
@@ -68,6 +75,9 @@ extern "C" fn kmain() -> ! {
     // Limine's serial terminal leaves the cursor mid-line; start the banner on a fresh one.
     kprintln!();
     kprintln!("CarvOS chisel v{} booting", env!("CARGO_PKG_VERSION"));
+
+    #[cfg(test)]
+    test_main();
 
     if !BASE_REVISION.is_supported() {
         panic!(
@@ -117,6 +127,8 @@ extern "C" fn kmain() -> ! {
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     arch::x86_64::disable_interrupts();
+    #[cfg(test)]
+    serial::_print_unlocked(format_args!("[failed]\n"));
     match info.location() {
         Some(loc) => serial::_print_unlocked(format_args!(
             "chisel: PANIC at {}:{}:{}: {}\n",
@@ -127,5 +139,8 @@ fn panic(info: &PanicInfo) -> ! {
         )),
         None => serial::_print_unlocked(format_args!("chisel: PANIC: {}\n", info.message())),
     }
+    #[cfg(test)]
+    test::exit_qemu(test::QemuExitCode::Failed);
+    #[cfg(not(test))]
     halt_forever()
 }

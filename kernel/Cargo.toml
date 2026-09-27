@@ -9,7 +9,9 @@ publish = false
 
 [[bin]]
 name = "chisel"
-test = false
+# `cargo test -p chisel --target x86_64-unknown-none` builds a bootable test kernel (see src/test.rs).
+# Host-side `cargo test --workspace` must pass `--exclude chisel`.
+test = true
 bench = false
 
 [dependencies]
