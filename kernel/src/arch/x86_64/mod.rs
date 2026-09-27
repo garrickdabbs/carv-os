@@ -7,7 +7,7 @@ pub fn interrupts_enabled() -> bool {
     let rflags: u64;
     // SAFETY: pushing RFLAGS and popping it into a register has no side effects.
     unsafe {
-        core::arch::asm!("pushfq", "pop {}", out(reg) rflags, options(nomem, preserves_flags));
+        core::arch::asm!("pushfq", "pop {}", out(reg) rflags, options(preserves_flags));
     }
     rflags & (1 << 9) != 0
 }
