@@ -428,7 +428,8 @@ protection, Scorecard and rulesets are all available at no cost.
   - fuzzing (20 min/target), Miri, `cargo audit`, `cargo geiger`
   - **toolchain drift:** build and test with `nightly` (unpinned) and `beta` so a future toolchain
     bump has no surprises; failures here are informational (`continue-on-error`)
-  - a stress boot: 50 consecutive boots must all reach the shell (catches races)
+  - a stress boot: 10 consecutive UEFI+BIOS rounds today (50 boots to a shell prompt from Phase 6);
+    the loop checks `cargo xtask smoke`'s exit code directly, never through `grep`
   - On failure the workflow creates or updates a single pinned issue **"Nightly is failing"**
     with links to the run, and closes it when green again.
 - **Test reporting:** `cargo-nextest` emits JUnit for host tests; the QEMU harness emits the same

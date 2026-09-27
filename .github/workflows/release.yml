@@ -128,7 +128,11 @@ jobs:
             echo '```'
             echo
           } > notes.md
-          pre=""; [ "$PRERELEASE" = "true" ] && pre="--prerelease"
+          case "$PRERELEASE" in
+            true) pre="--prerelease" ;;
+            false) pre="" ;;
+            *) echo "::error::release-check did not report prerelease=true|false (got '$PRERELEASE')"; exit 1 ;;
+          esac
           gh release create "$TAG" dist/* --verify-tag --title "CarvOS $TAG" --notes-file notes.md --generate-notes $pre
       - name: verify the published attestation
         env:
