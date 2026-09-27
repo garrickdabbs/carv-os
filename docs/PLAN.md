@@ -486,7 +486,7 @@ phase's interfaces are frozen.
 | P0.3 | Serial driver (16550) + `kprintln!` macro + panic handler printing to serial | Serial shows `CarvOS chisel v0.0.1 booting` |
 | P0.4 | `isa-debug-exit` + in-kernel test framework | `cargo xtask test` runs a trivial test, QEMU exits with the pass code — **done 2026-09-27**: 5 `#[test_case]`s, exit 33/35 mapped by `xtask`, `test` runs host + kernel + smoke layers |
 | P0.5 | `ci.yml` per §7.2: lint (fmt, clippy both targets, doc, `cargo deny`), host tests (nextest + JUnit), kernel tests and integration tests in QEMU with KVM enabled, `all-green` gate; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows a single required `all-green` check; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR |
-| P0.6 | `README.md` (build, run, verify-a-release sections), `docs/adr/0001-microkernel-rust-x86_64.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE` | Files exist; README badges for CI and Scorecard render |
+| P0.6 | `README.md` (build, run, verify-a-release sections), `docs/adr/0001-microkernel-rust-x86_64.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE` | Files exist; README badges for CI and Scorecard render — **done 2026-09-27** |
 | P0.7 | Repo governance per §7.1: `main` ruleset (PR + `all-green` required, linear history, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board, fine-grained PAT for agents | Direct push to `main` is rejected; a PR without green CI can't merge; agent token can't merge |
 | P0.8 | `release.yml` per §7.5 + `cargo xtask release-check`: reproducible ISO, tests against artifacts, boot-smoke, SHA256SUMS, SBOM, Sigstore signature, build provenance attestation, GitHub Release with generated notes. `nightly.yml` skeleton (toolchain drift, `cargo audit`, rolling `nightly` pre-release) | Tag `v0.1.0` produces a release whose ISO boots to the banner and passes `gh attestation verify`; two runs produce identical ISO hashes |
 
@@ -646,7 +646,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | in progress | P0.1–P0.5 done; P0.6 done except ADR-0001; P0.7 ruleset live (2026-09-27); P0.8 not started |
+| P0 Scaffolding & Boot | in progress | P0.1–P0.7 done (ADR-0001 recorded 2026-09-27); only P0.8 (release pipeline) remains |
 | P1 Kernel Core | not started | |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |
