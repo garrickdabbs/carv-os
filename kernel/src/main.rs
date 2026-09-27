@@ -6,8 +6,8 @@
 //! and `double-fault-test` exercise the panic handler and the double-fault path. In test builds
 //! (`cargo xtask test --kernel`) `kmain` runs the in-kernel tests instead and exits QEMU with a
 //! pass/fail code. The physical frame allocator is built from the memory map (P1.2) and the
-//! bootloader's page tables are adopted for map/unmap/translate (P1.3); the kernel heap (P1.4)
-//! comes next. Cmdline words `page-fault-test` and `stack-overflow-test` exercise the page-fault
+//! bootloader's page tables are adopted for map/unmap/translate (P1.3), and a 1 MiB kernel heap
+//! backs `alloc` (P1.4). Cmdline words `page-fault-test`, `stack-overflow-test` and `oom-test` exercise the page-fault
 //! handler and the guard-page → double-fault path.
 
 #![no_std]
@@ -17,10 +17,14 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(missing_docs)]
 #![feature(abi_x86_interrupt)]
+// Explicit out-of-memory path (see `alloc_error`) instead of `alloc`'s default handler.
+#![feature(alloc_error_handler)]
 // In-kernel tests: `#[test_case]` functions collected by the compiler and run by `test::runner`.
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, test_runner(crate::test::runner))]
 #![cfg_attr(test, reexport_test_harness_main = "test_main")]
+
+extern crate alloc;
 
 use core::panic::PanicInfo;
 
@@ -142,6 +146,13 @@ extern "C" fn kmain() -> ! {
             "  paging: adopted CR3 tables; kernel dynamic region at {:#x}",
             mm::paging::KERNEL_DYNAMIC_BASE
         );
+        let heap = mm::heap::init();
+        kprintln!(
+            "  heap: {} KiB at {:#x} ({} bytes used by the allocator itself)",
+            heap.size / 1024,
+            mm::heap::HEAP_BASE,
+            heap.used
+        );
         kprintln!(
             "  frames: {} free of {} ({} MiB); bitmap {} KiB at {:#x}; self-check ok ({:#x})",
             layout.free_frames,
@@ -170,6 +181,9 @@ extern "C" fn kmain() -> ! {
         .any(|w| w == "stack-overflow-test")
     {
         force_stack_overflow();
+    }
+    if cmdline.split_whitespace().any(|w| w == "oom-test") {
+        force_oom();
     }
 
     kprintln!("chisel: nothing more to do yet; halting");
@@ -227,6 +241,34 @@ fn force_page_fault() -> ! {
 /// Switches to a small kernel stack that has an unmapped guard page beneath it, then recurses
 /// until the stack overflows into the guard: the write faults, the `#PF` handler cannot push its
 /// frame onto the exhausted stack, and the CPU escalates to `#DF` on the IST stack.
+/// Asks the heap for more than it holds so the allocation-error path runs: `alloc_error` must
+/// report `kernel heap exhausted` and end in the panic handler.
+fn force_oom() -> ! {
+    use alloc::vec::Vec;
+    kprintln!(
+        "chisel: allocating {} MiB from a {} KiB heap on purpose",
+        2,
+        mm::heap::HEAP_SIZE / 1024
+    );
+    let v: Vec<u8> = Vec::with_capacity(2 * 1024 * 1024);
+    unreachable!(
+        "a {}-byte allocation beyond the heap did not fail",
+        v.capacity()
+    );
+}
+
+/// Out-of-memory is a kernel bug or a missing budget check until the heap can grow; report the
+/// request and the heap state, then take the panic path (which halts).
+#[alloc_error_handler]
+fn alloc_error(layout: core::alloc::Layout) -> ! {
+    panic!(
+        "kernel heap exhausted: allocation of {} bytes (align {}) failed; {:?}",
+        layout.size(),
+        layout.align(),
+        mm::heap::stats()
+    );
+}
+
 fn force_stack_overflow() -> ! {
     use x86_64::VirtAddr;
     // Guard page at TEST_STACK_BASE - 4 KiB stays unmapped; four mapped pages above it.
