@@ -8,7 +8,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ### Added
 - P1.6: ACPI tables — `platform::acpi` parses the RSDP Limine hands over with the `acpi` crate (5.x, `alloc`),
-  reaching tables through the HHDM (pages the direct map skips are mapped into a small window), and keeps a
+  reaching tables through the HHDM (a region with pages the direct map skips is mapped whole, read-only and
+  cached, into a small window via the new `paging::map_reserved`), and keeps a
   `Summary`: table signatures, MADT local-APIC address, CPU APIC ids and I/O APICs, HPET base, and MCFG ECAM
   regions for P1.7. Boot prints all of it; the UEFI/BIOS smoke scenarios expect the HPET line; an in-kernel test
   checks the MADT, matches the boot CPU's APIC id against the running local APIC, and requires HPET and MCFG.

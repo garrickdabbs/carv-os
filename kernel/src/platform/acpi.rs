@@ -3,9 +3,11 @@
 //! (MADT), the HPET base (HPET), and the PCIe ECAM regions (MCFG, consumed by P1.7).
 //!
 //! Tables normally sit in ACPI-reclaimable or NVS memory that Limine's direct map covers, so the
-//! handler hands out HHDM aliases. A page the direct map does not cover (seen for device memory
-//! in P1.5) is mapped read-only-by-convention into a small window in the kernel dynamic region
-//! instead; those few pages are never unmapped (the tables are read once and kept as a summary).
+//! handler hands out HHDM aliases. A region with any page the direct map does not cover is
+//! instead mapped *whole*, page by page and contiguously, into a small window in the kernel
+//! dynamic region with [`paging::map_reserved`] (read-only, normal cached memory: these are
+//! firmware RAM pages, not device registers). Window pages are never unmapped (the tables are
+//! read once and kept as a summary).
 
 use alloc::vec::Vec;
 use core::ptr::NonNull;
@@ -82,25 +84,34 @@ struct HhdmHandler {
 }
 
 impl HhdmHandler {
-    /// Virtual address for `phys`, mapping its page into the table window if the HHDM lacks it.
-    fn virt_for(&self, phys: u64) -> u64 {
-        let via_hhdm = self.hhdm + phys;
-        if paging::translate(VirtAddr::new(via_hhdm)).is_some() {
-            return via_hhdm;
+    /// Virtual address of the physical range `[phys, phys + size)` as one contiguous mapping:
+    /// the HHDM alias when the direct map covers every page of it, otherwise a fresh window
+    /// mapping of the whole range (so a region never straddles two strategies).
+    fn virt_for_region(&self, phys: u64, size: u64) -> u64 {
+        let first_page = phys & !0xFFF;
+        let end = phys + size.max(1);
+        let pages = (first_page..end).step_by(0x1000);
+        if pages
+            .clone()
+            .all(|p| paging::translate(VirtAddr::new(self.hhdm + p)).is_some())
+        {
+            return self.hhdm + phys;
         }
-        let page_phys = phys & !0xFFF;
-        let virt = WINDOW_NEXT.fetch_add(0x1000, Ordering::Relaxed);
+        let count = pages.clone().count() as u64;
+        let base = WINDOW_NEXT.fetch_add(count * 0x1000, Ordering::Relaxed);
         assert!(
-            virt < TABLE_WINDOW_BASE + TABLE_WINDOW_SIZE,
+            base + count * 0x1000 <= TABLE_WINDOW_BASE + TABLE_WINDOW_SIZE,
             "ACPI table window exhausted"
         );
-        let page = Page::containing_address(VirtAddr::new(virt));
-        // SAFETY: the page holds firmware tables the direct map skipped; it is not RAM the frame
-        // allocator hands out (it never covers non-usable memmap entries), so no aliasing.
-        if let Err(e) = unsafe { paging::map_mmio(page, PhysAddr::new(page_phys)) } {
-            panic!("mapping ACPI table page {page_phys:#x}: {e}");
+        for (i, page_phys) in pages.enumerate() {
+            let page = Page::containing_address(VirtAddr::new(base + i as u64 * 0x1000));
+            // SAFETY: the page holds firmware tables the direct map skipped: reserved memory the
+            // frame allocator never covers (it only frees usable memmap entries), read here only.
+            if let Err(e) = unsafe { paging::map_reserved(page, PhysAddr::new(page_phys)) } {
+                panic!("mapping ACPI table page {page_phys:#x}: {e}");
+            }
         }
-        virt + (phys & 0xFFF)
+        base + (phys - first_page)
     }
 }
 
@@ -110,25 +121,13 @@ impl AcpiHandler for HhdmHandler {
         physical_address: usize,
         size: usize,
     ) -> PhysicalMapping<Self, T> {
-        let start = physical_address as u64;
-        // Regions may straddle pages: make sure every page is reachable before handing out the
-        // start address (the HHDM case is contiguous; the window case maps consecutive pages).
-        let first_virt = self.virt_for(start);
-        let mut next_page = (start & !0xFFF) + 0x1000;
-        while next_page < start + size as u64 {
-            let v = self.virt_for(next_page);
-            debug_assert_eq!(
-                v - first_virt,
-                next_page - start,
-                "ACPI region spans non-contiguous mappings"
-            );
-            next_page += 0x1000;
-        }
-        // SAFETY: `first_virt` is a live mapping of `physical_address`, valid for `size` bytes.
+        let virt = self.virt_for_region(physical_address as u64, size as u64);
+        // SAFETY: `virt` is one contiguous live mapping of `physical_address`, valid for `size`
+        // bytes (see `virt_for_region`).
         unsafe {
             PhysicalMapping::new(
                 physical_address,
-                NonNull::new(first_virt as *mut T).expect("ACPI mapping is never null"),
+                NonNull::new(virt as *mut T).expect("ACPI mapping is never null"),
                 size,
                 size,
                 self.clone(),

@@ -196,6 +196,37 @@ pub unsafe fn map_mmio(page: Page<Size4KiB>, phys: PhysAddr) -> Result<(), MapEr
     .map_err(MapError::Mapper)
 }
 
+/// Maps `page` (inside the dynamic region) read-only to the firmware-owned RAM page at `phys`
+/// with normal (cached) attributes, and flushes the TLB entry. For ACPI tables and similar
+/// reserved regions the bootloader's direct map does not cover; unlike [`map_mmio`] this is
+/// ordinary memory, so it must not be mapped uncached, and unlike [`map`] the frame allocator
+/// never owns it (reserved memmap entries are never handed out).
+///
+/// # Safety
+/// `phys` must be a firmware-reserved RAM page (ACPI reclaimable/NVS or similar) that the frame
+/// allocator does not cover and that nothing writes; mapping allocator-owned RAM here would alias
+/// it.
+pub unsafe fn map_reserved(page: Page<Size4KiB>, phys: PhysAddr) -> Result<(), MapError> {
+    if !in_dynamic_region(page) {
+        return Err(MapError::OutsideDynamicRegion);
+    }
+    let flags = PageTableFlags::PRESENT.union(PageTableFlags::NO_EXECUTE);
+    with_mapper(|mapper| {
+        // SAFETY: the caller guarantees `phys` is reserved firmware memory nobody else maps for
+        // writing, and `page` is inside the kernel's dynamic region.
+        unsafe {
+            mapper.map_to(
+                page,
+                PhysFrame::containing_address(phys),
+                flags,
+                &mut FrameSource,
+            )
+        }
+        .map(|flush| flush.flush())
+    })
+    .map_err(MapError::Mapper)
+}
+
 /// Removes the mapping for `page` (inside the dynamic region), flushes the TLB entry, and returns
 /// the frame it pointed at (the caller decides whether to free it).
 pub fn unmap(page: Page<Size4KiB>) -> Result<Frame, UnmapFail> {
