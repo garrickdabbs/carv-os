@@ -16,6 +16,7 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   tracks *allocated* frames separately so a stray `free` cannot release a reservation, initialises only its
   own storage, and takes its lock with interrupts disabled; the mapper rejects pages outside the kernel
   dynamic region, returns the frame on failure, and also locks with interrupts disabled.
+- `stack-overflow-test` passes `depth = 0` in `rdi` explicitly instead of relying on a leftover register value (#40).
 - Release and nightly workflows split into a read-only build job and a minimal-permission publish job; the SLSA
   provenance is now also published as `carv-os-<tag>.intoto.jsonl` and `carv-os-<tag>.provenance.sigstore.json`
   release assets (#35). Fuller `.gitignore`; `CONTRIBUTING.md` added (#34, #35).

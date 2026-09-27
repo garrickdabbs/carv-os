@@ -243,6 +243,9 @@ fn force_stack_overflow() -> ! {
             "mov rsp, {top}",
             "call {f}",
             top = in(reg) top.as_u64(),
+            // First integer argument (`depth`) travels in rdi per the SysV ABI; leaving it to
+            // whatever the register held would make the recursion start from garbage (#40).
+            in("rdi") 0u64,
             f = sym recurse_forever,
             options(noreturn)
         );
