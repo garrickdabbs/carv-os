@@ -352,6 +352,16 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
 - **Labels & board:** `phase:P0`…`phase:P10`, `area:kernel|services|userland|crates|infra`,
   `kind:task|bug|adr|security`. One GitHub Issue per task ID, mirrored on a Project board with
   columns *Backlog → In progress → In review → Done*. The §11 status table summarizes the board.
+- **Board mechanics (set up 2026-09-27):** the *CarvOS Prototype* user project (#3) with Status
+  *Backlog / Ready / In progress / In review / Done*, 14-day iterations (Iteration 1 from 2026-09-26;
+  Phase N's tasks sit in Iteration N) and Priority/Size fields. Phase epics #46 (P1), #55 (P2) and
+  #66 (P3) hold one sub-issue per task ID with the AC copied from §8; the epic's sub-issue counter
+  is the phase progress. Built-in project workflows do the automatic moves: auto-add on creation,
+  item closed → Done, PR merged → Done, PR linked to issue, auto-close issue when set to Done,
+  auto-add sub-issues. Agents set *In progress* and *In review* with `gh` and link PRs with
+  `Closes #<task>` + `task: <ID>` in the body. No repository workflow touches the board: `GITHUB_TOKEN`
+  cannot write a user project and no secrets are stored (the logging-only `project-link.yml` attempt
+  was dropped in #45). All work is assigned to the maintainer until other contributors join.
 - **PR titles** are `<TaskID>: <title>` (e.g. `P2.7: IPC send/recv/call`); the release notes
   generator groups by that prefix.
 - **Review flow (learned 2026-09-27).** Two reviewers post *after* a PR opens or is pushed: GitHub
