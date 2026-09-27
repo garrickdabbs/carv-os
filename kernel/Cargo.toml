@@ -11,3 +11,4 @@ test = false
 bench = false
 
 [dependencies]
+limine = "0.6.5"

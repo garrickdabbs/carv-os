@@ -281,17 +281,22 @@ curl https://sh.rustup.rs -sSf | sh     # if rustup not installed
 cargo install cargo-fuzz               # later phases
 ```
 
-`cargo xtask run` → builds everything, makes `target/carv-os.iso` plus `target/data.img`, and starts:
+`cargo xtask run` → builds everything, makes `target/carv-os.iso` (UEFI + BIOS, Limine 11.4.1 with every
+file SHA-256 pinned in `xtask`) plus a blank `target/data.img`, and starts:
 ```
-qemu-system-x86_64 -machine q35 -cpu max -m 512M -enable-kvm \
-  -bios /usr/share/edk2/ovmf/OVMF_CODE.fd \
-  -cdrom target/carv-os.iso \
+qemu-system-x86_64 -machine q35 -cpu max -m 512M -accel kvm \
+  -drive if=pflash,unit=0,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
+  -drive if=pflash,unit=1,format=raw,file=target/OVMF_VARS.fd \
+  -cdrom target/carv-os.iso -boot d \
   -drive file=target/data.img,if=none,id=d0,format=raw -device virtio-blk-pci,drive=d0 \
   -netdev user,id=n0,hostfwd=tcp::5555-:23 -device virtio-net-pci,netdev=n0 \
-  -serial stdio -display none \
-  -device isa-debug-exit,iobase=0xf4,iosize=0x04 -no-reboot
+  -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+  -serial stdio -display none -no-reboot
 ```
-(`xtask` detects `/dev/kvm` and drops `-enable-kvm` if it's missing, e.g. in CI.)
+Flags: `--release`, `--bios` (SeaBIOS instead of OVMF), `--debug` (`-d int,cpu_reset,guest_errors -D target/qemu.log`),
+`--timeout SECS` (kill QEMU and exit 124; every automated run uses this). `xtask` probes the usual OVMF
+locations (override with `CARV_OVMF_CODE`/`CARV_OVMF_VARS`) and falls back to `-accel tcg` when
+`/dev/kvm` is not usable, e.g. in CI.
 
 ---
 
@@ -626,7 +631,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | in progress | P0.1 in review; P0.5/P0.7/P0.8 are the GitHub infra tasks (§7); project renamed to CarvOS |
+| P0 Scaffolding & Boot | in progress | P0.1 done; P0.2 in review; P0.5/P0.7/P0.8 are the GitHub infra tasks (§7) |
 | P1 Kernel Core | not started | |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |

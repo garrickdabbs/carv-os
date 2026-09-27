@@ -6,3 +6,5 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+# Verifies the SHA-256 of every pinned Limine file before it is used.
+sha2 = "0.10"
