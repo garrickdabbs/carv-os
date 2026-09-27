@@ -369,8 +369,9 @@ Triggers: `pull_request`, `push` to `main`, `merge_group`, `workflow_dispatch`.
 | `all-green` | `needs:` every gate job, `if: always()`, fails unless each is `success` (`docs-gate` may be `skipped`). **This is the only required status check**, so adding jobs never means touching the ruleset. | 1 min |
 
 Details:
-- **Toolchain** comes from `rust-toolchain.toml` (`dtolnay/rust-toolchain` reads it), so CI and
-  laptops always agree. `--locked` everywhere; `Cargo.lock` is committed.
+- **Toolchain** comes from `rust-toolchain.toml`: CI runs plain `rustup toolchain install`, which
+  installs exactly the pinned nightly, components and target, so CI and laptops always agree and no
+  third-party toolchain action is needed. `--locked` everywhere; `Cargo.lock` is committed.
 - **Caching:** `Swatinem/rust-cache` keyed on the lockfile and toolchain; Limine binaries are fetched
   by **pinned release tag + SHA-256** that `xtask` verifies before use (never "latest").
 - **KVM on GitHub-hosted Linux runners** (nested virtualization is available on `ubuntu-latest`):
