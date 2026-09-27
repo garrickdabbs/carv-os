@@ -86,7 +86,11 @@ impl<'a> BitmapAllocator<'a> {
                 self.free += 1;
             }
         }
-        self.hint = self.hint.min(first / 64);
+        // `min` can only lower the hint, so it can never point past the bitmap; the range check
+        // just makes that explicit for readers (#38).
+        if first < self.frame_count {
+            self.hint = self.hint.min(first / 64);
+        }
     }
 
     /// Marks `count` frames starting at `first` as used (e.g. the bitmap's own storage).
@@ -236,6 +240,23 @@ mod tests {
         assert_eq!(a.free_frames(), 0);
         a.free(all[77]).unwrap();
         assert_eq!(a.allocate(), Some(77));
+    }
+
+    #[test]
+    fn out_of_range_free_range_is_harmless() {
+        let (mut bits, n) = fresh(100);
+        let mut a = BitmapAllocator::new(&mut bits, n);
+        a.free_range(0, n);
+        for _ in 0..90 {
+            a.allocate().unwrap(); // moves the hint to the last word
+        }
+        a.free_range(1_000_000, 5); // entirely beyond the bitmap
+        a.free_range(usize::MAX - 2, 10); // saturating end
+        assert_eq!(a.free_frames(), 10);
+        assert!(
+            a.allocate().is_some(),
+            "allocate must not index past the bitmap"
+        );
     }
 
     #[test]
