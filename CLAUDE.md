@@ -15,6 +15,7 @@ Read it before starting any task.
 
 ## Rules
 - One task ID per branch/PR (`p2.7-ipc`). Stay inside the directories your task names.
+- Several agent sessions may run on this machine at once. Work in your **own git worktree** (`git worktree add ../carv-os-<name> origin/main`), never in a checkout another session uses; never use bare `git stash`; background scripts read state via `gh` and never `checkout`/`pull`.
 - Put logic in pure `crates/*` libraries (host-testable) whenever possible; the kernel and services are thin glue.
 - Every `unsafe` block needs a `// SAFETY:` comment explaining why it is sound (enforced: `#![deny(clippy::undocumented_unsafe_blocks)]` in every crate root). Every public item needs a doc comment (`#![deny(missing_docs)]`).
 - No changes to `docs/abi.md` or `crates/carv-abi` after the ABI freeze (P2.10) without a new ADR in `docs/adr/`.
