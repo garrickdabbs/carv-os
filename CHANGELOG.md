@@ -6,6 +6,12 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Added
+- P1.1: GDT with kernel code/data/TSS descriptors, a dedicated double-fault IST stack, and an IDT with a handler
+  for every CPU exception (`#BP` resumes and is counted; `#DF` prints on its own stack and halts; everything
+  else panics with the frame). `x86_64` 0.15 crate. Kernel cmdline `double-fault-test` and a `dfault` smoke
+  scenario prove the double-fault path; in-kernel tests cover `int3` and the loaded selectors.
+
 ### Fixed
 - `release-check` fails instead of silently continuing when `GITHUB_OUTPUT` cannot be written, and the release
   workflow refuses to publish without an explicit prerelease decision (#26); `[workspace.package]` parsing

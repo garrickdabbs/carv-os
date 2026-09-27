@@ -1,9 +1,11 @@
 //! chisel: the CarvOS microkernel.
 //!
-//! P0.4 state: Limine boots us, the 16550 boot console comes up, we print the banner and what
-//! the bootloader handed over, and halt. Kernel command line `panic-test` exercises the panic
-//! handler. In test builds (`cargo xtask test --kernel`) `kmain` runs the in-kernel tests instead
-//! and exits QEMU with a pass/fail code. GDT/IDT (P1.1) and the rest of the kernel core come next.
+//! P1.1 state: Limine boots us, the 16550 boot console comes up, the GDT/TSS/IDT are loaded so
+//! every CPU exception prints a message (double faults on their own IST stack), we print the
+//! banner and what the bootloader handed over, and halt. Kernel command line words `panic-test`
+//! and `double-fault-test` exercise the panic handler and the double-fault path. In test builds
+//! (`cargo xtask test --kernel`) `kmain` runs the in-kernel tests instead and exits QEMU with a
+//! pass/fail code. Frame allocator and paging (P1.2–P1.3) come next.
 
 #![no_std]
 #![no_main]
@@ -11,6 +13,7 @@
 // Every `unsafe` block must carry a `// SAFETY:` comment (CLAUDE.md rule, enforced mechanically).
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(missing_docs)]
+#![feature(abi_x86_interrupt)]
 // In-kernel tests: `#[test_case]` functions collected by the compiler and run by `test::runner`.
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, test_runner(crate::test::runner))]
@@ -76,6 +79,17 @@ extern "C" fn kmain() -> ! {
     kprintln!();
     kprintln!("CarvOS chisel v{} booting", env!("CARGO_PKG_VERSION"));
 
+    arch::x86_64::gdt::init();
+    arch::x86_64::idt::init();
+    let sel = arch::x86_64::gdt::selectors();
+    kprintln!(
+        "  gdt/tss/idt: loaded (cs={:#x} ss={:#x} tss={:#x}; double-fault IST top {:#x})",
+        sel.code.0,
+        sel.data.0,
+        sel.tss.0,
+        arch::x86_64::gdt::double_fault_stack_top().as_u64()
+    );
+
     #[cfg(test)]
     test_main();
 
@@ -119,9 +133,29 @@ extern "C" fn kmain() -> ! {
     if cmdline.split_whitespace().any(|w| w == "panic-test") {
         panic!("deliberate panic requested on the kernel command line");
     }
+    if cmdline.split_whitespace().any(|w| w == "double-fault-test") {
+        force_double_fault();
+    }
 
     kprintln!("chisel: nothing more to do yet; halting");
     halt_forever()
+}
+
+/// Makes the stack unusable and raises an exception, so the CPU faults while pushing the
+/// exception frame and escalates to a double fault — which must land on the IST stack and print
+/// `chisel: DOUBLE FAULT`. This is the deterministic stand-in for a stack overflow until paging
+/// (P1.3) gives the kernel stack a guard page.
+fn force_double_fault() -> ! {
+    // SAFETY: deliberately destroys the stack pointer; the double-fault handler halts the CPU
+    // and nothing after this point ever runs.
+    unsafe {
+        core::arch::asm!(
+            "mov rsp, {bad}",
+            "int3",
+            bad = in(reg) 0x0000_8000_0000_0000u64, // first non-canonical address
+            options(noreturn)
+        );
+    }
 }
 
 #[panic_handler]

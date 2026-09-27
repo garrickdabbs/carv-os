@@ -11,6 +11,48 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::arch::x86_64;
 
+/// A `static` with interior mutability for boot-time tables (GDT, TSS, IDT) that are written
+/// exactly once during single-core initialisation and read-only afterwards. It performs no
+/// synchronisation at all; every access is `unsafe` and the caller upholds that discipline.
+pub struct StaticCell<T>(UnsafeCell<T>);
+
+// SAFETY: access is serialised by construction (see the type docs); the cell adds no interior
+// mutability beyond what the caller promises to manage.
+unsafe impl<T: Sync> Sync for StaticCell<T> {}
+
+impl<T> StaticCell<T> {
+    /// Wraps `value`.
+    pub const fn new(value: T) -> Self {
+        Self(UnsafeCell::new(value))
+    }
+
+    /// Shared access.
+    ///
+    /// # Safety
+    /// No `get_mut` borrow may be live, and the value must already be initialised if readers
+    /// depend on that.
+    pub unsafe fn get(&self) -> &T {
+        // SAFETY: the caller guarantees no concurrent mutable borrow.
+        unsafe { &*self.0.get() }
+    }
+
+    /// Exclusive access.
+    ///
+    /// # Safety
+    /// The caller must be the only accessor for the borrow's lifetime — in practice, boot-time
+    /// initialisation on the boot CPU with interrupts disabled.
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn get_mut(&self) -> &mut T {
+        // SAFETY: the caller guarantees exclusivity.
+        unsafe { &mut *self.0.get() }
+    }
+
+    /// Raw pointer to the value, for address arithmetic without creating a reference.
+    pub fn as_ptr(&self) -> *const T {
+        self.0.get()
+    }
+}
+
 pub struct SpinLock<T> {
     locked: AtomicBool,
     value: UnsafeCell<T>,
