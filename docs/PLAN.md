@@ -495,6 +495,7 @@ protection, Scorecard and rulesets are all available at no cost.
      `SHA256SUMS`, SBOMs `carv-os-v0.y.z-<crate>.cdx.json`, one CycloneDX document per workspace
      crate (`cargo cyclonedx --describe crate`)
   5. **sign & attest:** Sigstore keyless signature of `SHA256SUMS` (`cosign sign-blob` via OIDC,
+     retried up to 4 times with backoff because Fulcio/Rekor occasionally reset the connection, #76;
      `.sigstore.json` bundle) and **SLSA build provenance** via `actions/attest-build-provenance` for
      every artifact, so `gh attestation verify carv-os-*.iso -R garrickdabbs/carv-os` proves it came
      from this repo's workflow at that commit. The provenance is *also* published as release assets —

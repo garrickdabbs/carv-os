@@ -6,6 +6,10 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Changed
+- `release.yml` retries `cosign sign-blob` up to four times with backoff on transient Sigstore network errors
+  (the `v0.1.1-rc.2` publish job needed a manual re-run) (#76).
+
 ### Added
 - P1.5: local APIC + timer — the legacy 8259 PICs are remapped and masked (`arch::x86_64::pic`), the xAPIC register page is
   mapped uncached at `paging::KERNEL_MMIO_BASE` (new `paging::map_mmio`; Limine's direct map does not cover device

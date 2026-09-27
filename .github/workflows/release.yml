@@ -132,8 +132,24 @@ jobs:
           path: dist
       - name: install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - name: sign SHA256SUMS (Sigstore keyless, OIDC)
-        run: cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
+      - name: sign SHA256SUMS (Sigstore keyless, OIDC; retried on transient network errors)
+        run: |
+          # Fulcio/Rekor occasionally reset the connection (v0.1.1-rc.2 needed a manual re-run, #76).
+          # A bounded retry with backoff covers that without weakening anything: each attempt is a
+          # fresh keyless signing, and a persistent failure still fails the job.
+          set -uo pipefail
+          for attempt in 1 2 3 4; do
+            rm -f dist/SHA256SUMS.sigstore.json
+            if cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS; then
+              test -s dist/SHA256SUMS.sigstore.json && exit 0
+            fi
+            if [ "$attempt" -lt 4 ]; then
+              echo "::warning::cosign sign-blob attempt $attempt failed; retrying in $((attempt * 15))s"
+              sleep $((attempt * 15))
+            fi
+          done
+          echo "::error::cosign sign-blob failed after 4 attempts"
+          exit 1
       - name: build provenance attestation for every artifact
         id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
