@@ -15,5 +15,6 @@ test = true
 bench = false
 
 [dependencies]
+carv-frames = { path = "../crates/carv-frames" }
 limine = "0.6.5"
 x86_64 = { version = "0.15.5", features = ["abi_x86_interrupt"] }

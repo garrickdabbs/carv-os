@@ -1,0 +1,10 @@
+[package]
+name = "carv-frames"
+description = "Bitmap physical-frame allocator core for CarvOS (pure, no_std, host-testable)"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

@@ -172,6 +172,7 @@ A rolling, unsigned `nightly` pre-release tracks `main`. All `0.y.z` releases ar
 
 ```
 kernel/          chisel, the microkernel (no_std, x86_64-unknown-none)
+crates/          pure, host-testable libraries: carv-frames (bitmap frame allocator)
 xtask/           cargo xtask: build, image, run, smoke, docs-gate
 docs/PLAN.md     design, roadmap with task IDs, GitHub infrastructure, status
 docs/adr/        architecture decision records (as they are written)
@@ -181,8 +182,7 @@ CHANGELOG.md     Keep-a-Changelog; every PR adds a line under Unreleased
 SECURITY.md      how to report a vulnerability
 deny.toml        cargo-deny policy
 ```
-`crates/` (host-testable libraries), `services/` (user-space drivers and servers) and `userland/`
-(shell and tools) appear in later phases.
+`services/` (user-space drivers and servers) and `userland/` (shell and tools) appear in later phases.
 
 ## Contributing
 
