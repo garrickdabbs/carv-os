@@ -1000,12 +1000,13 @@ fn docs_gate(args: &[String]) -> Result<(), String> {
     changed.dedup_by(|a, b| a.path == b.path);
 
     // The changelog rule inspects content, not just paths: something must have been added under
-    // the Unreleased heading.
+    // the Unreleased heading — or, for a release PR, a new version heading must have appeared
+    // (that is where the Unreleased entries went).
     let changelog_grew = {
         let before =
             git(&repo, &["show", &format!("{merge_base}:CHANGELOG.md")]).unwrap_or_default();
         let after = fs::read_to_string(repo.join("CHANGELOG.md")).unwrap_or_default();
-        unreleased_grew(&before, &after)
+        unreleased_grew(&before, &after) || version_section_added(&before, &after)
     };
 
     let violations = docs_gate_violations(&changed, changelog_grew);
@@ -1110,6 +1111,20 @@ fn unreleased_grew(before: &str, after: &str) -> bool {
         .lines()
         .map(str::trim)
         .any(|l| !l.is_empty() && !l.starts_with("###") && !old.contains(&l))
+}
+
+/// Whether `after` has a `## [x.y.z]` version heading that `before` lacks: the signature of a
+/// release PR, which empties Unreleased rather than growing it.
+fn version_section_added(before: &str, after: &str) -> bool {
+    let headings = |s: &str| -> Vec<String> {
+        s.lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("## [") && !l.starts_with("## [Unreleased]"))
+            .map(str::to_string)
+            .collect()
+    };
+    let old = headings(before);
+    headings(after).iter().any(|h| !old.contains(h))
 }
 
 /// Paths whose change means "code changed" for the documentation gate.
@@ -2024,6 +2039,20 @@ mod tests {
             "touching a released section must not count"
         );
         assert!(unreleased_grew("", "## [Unreleased]\n- first\n"));
+    }
+
+    #[test]
+    fn release_pr_counts_as_changelog_growth() {
+        let before =
+            "# C\n\n## [Unreleased]\n\n### Added\n- thing\n\n## [0.1.0] - 2026-09-27\n- released\n";
+        let released = "# C\n\n## [Unreleased]\n\n## [0.1.1] - 2026-09-28\n\n### Added\n- thing\n\n## [0.1.0] - 2026-09-27\n- released\n";
+        assert!(!unreleased_grew(before, released), "entries only moved");
+        assert!(version_section_added(before, released));
+        assert!(!version_section_added(before, before));
+        assert!(
+            !version_section_added(released, before),
+            "removing a heading is not a release"
+        );
     }
 
     #[test]

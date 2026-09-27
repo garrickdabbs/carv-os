@@ -430,7 +430,8 @@ protection, Scorecard and rulesets are all available at no cost.
 ### 7.4 Test infrastructure on GitHub
 - **Documentation gate.** `cargo xtask docs-gate` compares the change set against the merge-base
   and fails (exit 2) when code moved without its documentation (rules in the `docs-gate` row
-  above; the logic is a pure, unit-tested function in `xtask`). CI runs it on every PR from the
+  above; the logic is a pure, unit-tested function in `xtask`; a release PR satisfies the CHANGELOG
+  rule by adding the new `## [x.y.z]` heading instead of an Unreleased line). CI runs it on every PR from the
   *base branch's* xtask; agents run it locally before opening a PR. A Claude Code Stop hook that runs
   the gate is an optional, **uncommitted** personal setting (`.claude/settings.local.json`;
   `.claude/` is gitignored): a committed settings file would run shell commands on every
@@ -461,6 +462,8 @@ protection, Scorecard and rulesets are all available at no cost.
   `cargo xtask release-check` fails if the git tag ≠ Cargo version or `CHANGELOG.md` lacks an entry.
 - **Cadence:** tagged releases at milestones: `v0.1.0` boots to serial banner (end of Phase 0),
   `v0.2.0` MVP 1 "Hello, CarvOS" (Phase 6), `v0.3.0` MVP 2 (Phase 8), `v0.4.0` hardening (Phase 9).
+  Interim `v0.1.z` releases are cut on request between milestones (`v0.1.1`, 2026-09-27: Phase 1
+  progress and reproducible builds); the milestone numbers stay reserved.
   Plus a rolling **`nightly` pre-release** re-tagged by `nightly.yml` when it is green, so there is
   always a bootable image of the latest `main`.
 - **Changelog:** `CHANGELOG.md` in Keep-a-Changelog format. Each PR adds a line under
@@ -673,7 +676,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0` |
+| P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | in progress | P1.1–P1.3 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables); **next: P1.4 kernel heap** |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |

@@ -6,6 +6,12 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-27
+
+Phase 1 under way: the kernel now has a GDT/TSS/IDT with a handler for every exception, a physical
+frame allocator and a page-table mapper, and releases are byte-identical on any machine. Also the
+review follow-ups and fixes from the first day of public development.
+
 ### Changed
 - The Claude Code settings file (`.claude/settings.json`, a Stop hook running the docs gate) is no longer
   committed and `.claude/` is gitignored: a shared hook file runs shell commands on every contributor's machine.

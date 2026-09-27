@@ -62,7 +62,7 @@ cargo xtask run
 ```
 You should see the Limine menu, then:
 ```
-CarvOS chisel v0.1.0 booting
+CarvOS chisel v0.1.1 booting
   bootloader: Limine 11.4.1 (base revision 6)
   hhdm offset: 0xffff800000000000
   memory map: 31 entries, 466 MiB usable
@@ -197,7 +197,8 @@ but the workflow is the same for anyone:
    changes code under `kernel/`, `crates/`, `services/`, `userland/`, `xtask/` or `Cargo.toml`
    without a `CHANGELOG.md` entry; changes `xtask` without updating this README, `CLAUDE.md` or the
    plan; changes CI workflows without updating the plan or README; or changes `docs/abi.md` without
-   a *new* ADR. The CHANGELOG check is content-based: something must be added under `## [Unreleased]`.
+   a *new* ADR. The CHANGELOG check is content-based: something must be added under `## [Unreleased]`
+   (a release PR, which moves those entries under a new `## [x.y.z]` heading, satisfies it that way).
    Dependabot PRs are exempt. If a change genuinely needs no docs, write
    `docs-gate: skip — <reason of at least 20 characters>` in the PR body; a bare marker fails the gate.
    In CI the gate runs from the base branch's copy of `xtask`, so a PR cannot change the rules it is
