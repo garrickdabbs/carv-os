@@ -1,7 +1,11 @@
-//! x86_64 primitives: descriptor tables, exception handlers, port I/O, interrupt-flag control.
+//! x86_64 primitives: descriptor tables, exception handlers, port I/O, interrupt-flag control,
+//! the legacy PICs (masked), the PIT (calibration stopwatch) and the local APIC with its timer.
 
+pub mod apic;
 pub mod gdt;
 pub mod idt;
+pub mod pic;
+pub mod pit;
 pub mod port;
 
 /// Returns whether interrupts are currently enabled (RFLAGS.IF).

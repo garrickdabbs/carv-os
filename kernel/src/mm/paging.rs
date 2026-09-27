@@ -30,6 +30,10 @@ pub const KERNEL_DYNAMIC_BASE: u64 = 0xffff_9000_0000_0000;
 /// Size of the dynamic region: one PML4 slot, 512 GiB.
 pub const KERNEL_DYNAMIC_SIZE: u64 = 1 << 39;
 
+/// Start of the kernel's MMIO window inside the dynamic region (512 MiB in): device register
+/// pages mapped by [`map_mmio`], one 4 KiB page each, handed out in order by the drivers.
+pub const KERNEL_MMIO_BASE: u64 = KERNEL_DYNAMIC_BASE + 0x2000_0000;
+
 /// Flags for ordinary kernel data pages: present, writable, not executable (W^X).
 pub const KERNEL_DATA: PageTableFlags = PageTableFlags::PRESENT
     .union(PageTableFlags::WRITABLE)
@@ -160,6 +164,36 @@ pub fn map(
         .map(|flush| flush.flush())
     });
     result.map_err(|e| (MapError::Mapper(e), frame))
+}
+
+/// Maps `page` (inside the dynamic region) to the device register page at `phys`, uncached and
+/// write-through, and flushes the TLB entry. Unlike [`map`] the frame is not one of ours: the
+/// physical frame allocator never covers MMIO, so there is no ownership to check.
+///
+/// # Safety
+/// `phys` must be a device's memory-mapped register page (the local APIC, an HPET, PCI BARs),
+/// never RAM the frame allocator could hand out; mapping RAM here would alias it uncached.
+pub unsafe fn map_mmio(page: Page<Size4KiB>, phys: PhysAddr) -> Result<(), MapError> {
+    if !in_dynamic_region(page) {
+        return Err(MapError::OutsideDynamicRegion);
+    }
+    let flags = KERNEL_DATA
+        .union(PageTableFlags::NO_CACHE)
+        .union(PageTableFlags::WRITE_THROUGH);
+    with_mapper(|mapper| {
+        // SAFETY: the caller guarantees `phys` is a device page nobody else maps as RAM, and
+        // `page` is inside the kernel's dynamic region.
+        unsafe {
+            mapper.map_to(
+                page,
+                PhysFrame::containing_address(phys),
+                flags,
+                &mut FrameSource,
+            )
+        }
+        .map(|flush| flush.flush())
+    })
+    .map_err(MapError::Mapper)
 }
 
 /// Removes the mapping for `page` (inside the dynamic region), flushes the TLB entry, and returns
