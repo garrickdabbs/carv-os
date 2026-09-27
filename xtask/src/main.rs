@@ -5,8 +5,8 @@
 //! - `limine`: fetch and verify the pinned Limine bootloader files (done automatically by `image`).
 //! - `image [--release]`: build a UEFI + BIOS bootable ISO (`target/carv-os.iso`) and a blank
 //!   virtio data disk (`target/data.img`).
-//! - `run [--release] [--bios] [--debug] [--timeout SECS]`: boot the image in QEMU with serial on
-//!   stdio. Uses KVM when `/dev/kvm` is usable, TCG otherwise.
+//! - `run [--release] [--bios] [--debug] [--timeout SECS] [--cmdline STR]`: boot the image in QEMU
+//!   with serial on stdio. Uses KVM when `/dev/kvm` is usable, TCG otherwise.
 //!
 //! `test` arrives in P0.4.
 
@@ -127,11 +127,12 @@ fn print_help() {
     println!(
         "  image [--release]                Build target/{ISO_NAME} (UEFI + BIOS) and target/{DATA_IMG_NAME}"
     );
-    println!("  run [--release] [--bios] [--debug] [--timeout SECS]");
+    println!("  run [--release] [--bios] [--debug] [--timeout SECS] [--cmdline STR]");
     println!("                                   Boot the image in QEMU, serial on stdio");
     println!("    --bios      boot with SeaBIOS instead of OVMF (UEFI)");
     println!("    --debug     log interrupts and CPU resets to target/qemu.log");
     println!("    --timeout   kill QEMU after SECS seconds and exit {EXIT_TIMEOUT}");
+    println!("    --cmdline   kernel command line passed through Limine (e.g. panic-test)");
 }
 
 // ---------------------------------------------------------------- build
@@ -254,10 +255,10 @@ fn image(args: &[String]) -> Result<PathBuf, String> {
         [flag] if flag == "--release" => true,
         _ => return Err(format!("unexpected arguments to image: {args:?}")),
     };
-    build_image(release)
+    build_image(release, "")
 }
 
-fn build_image(release: bool) -> Result<PathBuf, String> {
+fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
     let kernel = build_kernel(release)?;
     let limine = ensure_limine()?;
 
@@ -273,7 +274,7 @@ fn build_image(release: bool) -> Result<PathBuf, String> {
     }
 
     copy(&kernel, &boot.join(KERNEL_PACKAGE))?;
-    fs::write(boot_limine.join("limine.conf"), limine_conf())
+    fs::write(boot_limine.join("limine.conf"), limine_conf(cmdline))
         .map_err(|e| format!("writing limine.conf: {e}"))?;
     for name in [
         "limine-bios.sys",
@@ -348,11 +349,19 @@ fn build_image(release: bool) -> Result<PathBuf, String> {
 }
 
 /// Limine configuration. `serial: yes` mirrors the boot menu to COM1 so the handoff is
-/// visible (and testable) on `-serial stdio`.
-fn limine_conf() -> String {
-    format!(
+/// visible (and testable) on `-serial stdio`. `cmdline` is passed to the kernel verbatim.
+fn limine_conf(cmdline: &str) -> String {
+    let mut conf = format!(
         "timeout: 1\nserial: yes\n\n/CarvOS\n    protocol: limine\n    path: boot():/boot/{KERNEL_PACKAGE}\n    kaslr: no\n"
-    )
+    );
+    if !cmdline.is_empty() {
+        assert!(
+            !cmdline.contains('\n'),
+            "kernel cmdline must be a single line"
+        );
+        conf.push_str(&format!("    cmdline: {cmdline}\n"));
+    }
+    conf
 }
 
 fn copy(from: &Path, to: &Path) -> Result<(), String> {
@@ -368,6 +377,7 @@ struct RunOpts {
     bios: bool,
     debug: bool,
     timeout: Option<Duration>,
+    cmdline: String,
 }
 
 fn parse_run_opts(args: &[String]) -> Result<RunOpts, String> {
@@ -376,6 +386,7 @@ fn parse_run_opts(args: &[String]) -> Result<RunOpts, String> {
         bios: false,
         debug: false,
         timeout: None,
+        cmdline: String::new(),
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -383,6 +394,9 @@ fn parse_run_opts(args: &[String]) -> Result<RunOpts, String> {
             "--release" => opts.release = true,
             "--bios" => opts.bios = true,
             "--debug" => opts.debug = true,
+            "--cmdline" => {
+                opts.cmdline = it.next().ok_or("--cmdline needs a value")?.clone();
+            }
             "--timeout" => {
                 let secs = it
                     .next()
@@ -399,7 +413,7 @@ fn parse_run_opts(args: &[String]) -> Result<RunOpts, String> {
 
 fn run(args: &[String]) -> Result<(), String> {
     let opts = parse_run_opts(args)?;
-    let iso = build_image(opts.release)?;
+    let iso = build_image(opts.release, &opts.cmdline)?;
     let mut qemu = qemu_command(&iso, &opts)?;
 
     println!("qemu: {}", shell_words(&qemu));
@@ -590,16 +604,21 @@ mod tests {
 
     #[test]
     fn limine_conf_points_at_kernel() {
-        let conf = limine_conf();
+        let conf = limine_conf("");
         assert!(conf.contains("protocol: limine"));
         assert!(conf.contains(&format!("path: boot():/boot/{KERNEL_PACKAGE}")));
         assert!(conf.contains("serial: yes"));
+        assert!(!conf.contains("cmdline:"));
+        assert!(limine_conf("panic-test").contains("    cmdline: panic-test\n"));
     }
 
     #[test]
     fn run_opts_parse() {
         let o = parse_run_opts(&["--bios".into(), "--timeout".into(), "7".into()]).unwrap();
         assert!(o.bios && !o.release && !o.debug);
+        assert!(o.cmdline.is_empty());
+        let c = parse_run_opts(&["--cmdline".into(), "a b".into()]).unwrap();
+        assert_eq!(c.cmdline, "a b");
         assert_eq!(o.timeout, Some(Duration::from_secs(7)));
         assert!(parse_run_opts(&["--timeout".into()]).is_err());
         assert!(parse_run_opts(&["--bogus".into()]).is_err());

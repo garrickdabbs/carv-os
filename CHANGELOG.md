@@ -11,3 +11,6 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - P0.2: Limine boot (v11.4.1, every file SHA-256 pinned), `cargo xtask image` (UEFI + BIOS bootable ISO
   plus a blank virtio data disk), `cargo xtask run` (QEMU with OVMF, KVM auto-detect, `--bios`,
   `--debug`, `--timeout`). The kernel prints the Limine handoff details over serial and halts.
+- P0.3: 16550 serial driver on COM1 with loopback self-test, `kprint!`/`kprintln!`, a panic handler that
+  reports file:line and message over serial, `SpinLock`, port I/O primitives, and
+  `cargo xtask run --cmdline STR` (Limine passes it to the kernel; `panic-test` triggers a test panic).
