@@ -1,3 +1,6 @@
+# `trim-paths` (nightly) keeps checkout/registry/sysroot paths out of release binaries (#29).
+cargo-features = ["trim-paths"]
+
 [workspace]
 resolver = "3"
 members = ["kernel", "xtask", "crates/carv-frames"]
@@ -17,3 +20,7 @@ panic = "abort"
 [profile.release]
 panic = "abort"
 debug = true
+# Sanitise every embedded path (workspace → ".", registry deps, rust-src) so the kernel ELF is
+# byte-identical on any machine. Symbolising with chisel-vX.Y.Z.elf still works: DWARF line
+# info keeps the relative paths.
+trim-paths = "all"

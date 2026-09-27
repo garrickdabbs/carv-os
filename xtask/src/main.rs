@@ -20,7 +20,8 @@
 //!
 //! `run` and `smoke` accept `--iso PATH` to boot an existing image (e.g. a release artifact)
 //! instead of building one. ISO assembly honours `SOURCE_DATE_EPOCH` (defaulting to the commit
-//! time) so two builds of the same commit produce byte-identical images.
+//! time) and `--release` images carry a debuginfo-stripped kernel; together with the release
+//! profile's `trim-paths` this makes two builds of the same commit byte-identical on any machine.
 
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(missing_docs)]
@@ -323,7 +324,8 @@ fn ensure_data_disk() -> Result<PathBuf, String> {
 
 /// Assembles a bootable ISO around `kernel` (any ELF built for the kernel target — the normal
 /// kernel or a test kernel) in `out_dir/iso_root`, writing `out_dir/iso_name`.
-/// For release builds, strips debuginfo from the kernel for reproducibility (#29).
+/// Release images get a debuginfo-stripped copy of the kernel (#29); the unstripped ELF stays in
+/// `target/` and ships separately as `chisel-vX.Y.Z.elf`.
 fn assemble_iso(
     kernel: &Path,
     cmdline: &str,
@@ -346,11 +348,11 @@ fn assemble_iso(
 
     let kernel_iso = boot.join(KERNEL_PACKAGE);
     copy(kernel, &kernel_iso)?;
-    // Strip debuginfo from release builds for reproducibility (#29).
     if release {
-        let mut objcopy = Command::new("objcopy");
-        objcopy.args(["--strip-debug", &kernel_iso.display().to_string()]);
-        run_tool(&mut objcopy, "objcopy")?;
+        // Smaller image, and immune to any DWARF detail that could still differ between machines.
+        let mut objcopy = Command::new(llvm_objcopy()?);
+        objcopy.arg("--strip-debug").arg(&kernel_iso);
+        run_tool(&mut objcopy, "llvm-objcopy --strip-debug")?;
     }
     fs::write(boot_limine.join("limine.conf"), limine_conf(cmdline))
         .map_err(|e| format!("writing limine.conf: {e}"))?;
@@ -498,6 +500,40 @@ fn limine_conf(cmdline: &str) -> String {
         conf.push_str(&format!("    cmdline: {cmdline}\n"));
     }
     conf
+}
+
+/// The toolchain's own `llvm-objcopy` (component `llvm-tools-preview`, pinned in
+/// `rust-toolchain.toml`), so stripping never depends on a system binutils.
+fn llvm_objcopy() -> Result<PathBuf, String> {
+    let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
+    let print = |args: &[&str]| -> Result<String, String> {
+        let out = Command::new(&rustc)
+            .args(args)
+            .output()
+            .map_err(|e| format!("failed to run rustc: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("rustc {} failed", args.join(" ")));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    let sysroot = print(&["--print", "sysroot"])?;
+    let host = print(&["-vV"])?
+        .lines()
+        .find_map(|l| l.strip_prefix("host: "))
+        .ok_or("rustc -vV did not report a host triple")?
+        .to_string();
+    let path = Path::new(&sysroot)
+        .join("lib/rustlib")
+        .join(host)
+        .join("bin/llvm-objcopy");
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "{} not found: is the llvm-tools-preview component installed? (rust-toolchain.toml lists it)",
+            path.display()
+        ))
+    }
 }
 
 fn copy(from: &Path, to: &Path) -> Result<(), String> {

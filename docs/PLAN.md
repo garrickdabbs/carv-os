@@ -389,10 +389,12 @@ Details:
   timeouts ×4, so the suite also passes on forks and other CI.
 - **Every QEMU run has a hard timeout** (`timeout` in xtask *and* `timeout-minutes` on the job).
   A hang is a failure, never a retry. No automatic re-runs: flaky tests get fixed, not retried.
-- **Reproducible builds** (P9.6): release profile sets `strip = "debuginfo"` on the ISO copy,
-  `--remap-path-prefix`, `SOURCE_DATE_EPOCH` from the commit date, and `xorriso`
-  `-volume_date all =<epoch>`; a CI job builds twice on different runners and asserts identical
-  ISO hashes.
+- **Reproducible builds** (P9.6, landed early for #29): the release profile sets cargo's
+  `trim-paths = "all"` (no checkout, registry or sysroot path in the ELF), `cargo xtask image
+  --release` strips debuginfo from the ISO's kernel copy (`llvm-objcopy` from `llvm-tools-preview`),
+  and `SOURCE_DATE_EPOCH` from the commit date pins every xorriso timestamp. The release job builds
+  twice — the second time from a different directory with a fresh `CARGO_HOME` — and asserts
+  identical ISO and kernel hashes.
 - **Self-hosted runner:** *not* used. Your Fedora box would be faster (real KVM), but a self-hosted
   runner on a public repo executes PR code from anyone who forks. Stay on GitHub-hosted runners.
 
@@ -454,8 +456,8 @@ protection, Scorecard and rulesets are all available at no cost.
 - **Release flow** (triggered by pushing a `v*` tag, which only the maintainer can do because tag
   creation is covered by the ruleset):
   1. `release-check`, then a **reproducible** `cargo xtask image --release` — `xtask` sets
-     `SOURCE_DATE_EPOCH` to the commit time for xorriso, and the workflow builds twice from clean and
-     requires identical SHA-256s
+     `SOURCE_DATE_EPOCH` to the commit time for xorriso, and the workflow builds twice — the second
+     time from another directory with a fresh `CARGO_HOME` — and requires identical SHA-256s
   2. run the **full test suite against the exact release artifacts** (not a rebuild)
   3. boot-smoke: `cargo xtask smoke --iso <release iso>` boots the exact artifact under UEFI and BIOS
      and requires the banner (and, from Phase 6, a shell prompt)
@@ -505,7 +507,7 @@ phase's interfaces are frozen.
 |---|---|---|
 | P1.1 | GDT + TSS (with IST stacks for double fault), IDT, exception handlers | Test triggers `int3`, handler runs; forced stack overflow → double-fault message, not triple fault — **done 2026-09-27** (`x86_64` crate; `#BP` test; `double-fault-test` smoke scenario forces an unusable stack, since a recursion overflow is only deterministic once P1.3 adds a kernel-stack guard page — that test is added then) |
 | P1.2 | Physical frame allocator from the Limine memory map (bitmap or buddy) | Kernel test: allocate/free 10k frames, no duplicates, count restored — **done 2026-09-27** (`crates/carv-frames` bitmap core, host-tested; kernel wrapper carves the bitmap from usable RAM via the HHDM) |
-| P1.3 | Paging: kernel mapper using the HHDM offset, map/unmap/translate | Test maps a fresh page, writes, reads back, unmaps → page fault handler catches access |
+| P1.3 | Paging: kernel mapper using the HHDM offset, map/unmap/translate | Test maps a fresh page, writes, reads back, unmaps → page fault handler catches access — **done 2026-09-27** (`kernel::mm::paging`; `pfault`/`sovflw` smoke scenarios) |
 | P1.4 | Kernel heap (`linked_list_allocator` or custom slab) + `alloc` | `Vec`/`Box`/`BTreeMap` work in kernel tests |
 | P1.5 | Local APIC + timer (calibrated against HPET/PIT), disable legacy PIC | Timer ticks at 1 kHz; test counts ticks over a busy wait |
 | P1.6 | ACPI table parsing (`acpi` crate) for MADT/HPET/MCFG | Boot log lists APIC ID(s) and HPET address |
@@ -594,7 +596,7 @@ phase's interfaces are frozen.
 | P9.3 | Fuzz targets (CBOR, vstore parser, syscall validator); fix all crashes | 1 hour of fuzzing per target with no crashes in CI nightly |
 | P9.4 | Kernel hardening: guard pages, W^X for all mappings, stack canaries where supported, KASLR-lite via Limine | Tests confirm W^X (write to a code page faults) |
 | P9.5 | Security review against a threat model doc (`docs/threat-model.md`) | Review doc + issues filed |
-| P9.6 | Reproducible-build verification job (two runners, identical ISO hash), `cargo llvm-cov` on pure crates, Miri + `cargo geiger` in nightly, crash-consistency and 50-boot stress loops in nightly | Nightly green for 7 consecutive days; geiger count tracked in the summary |
+| P9.6 | Reproducible-build verification job (two runners, identical ISO hash), `cargo llvm-cov` on pure crates, Miri + `cargo geiger` in nightly, crash-consistency and 50-boot stress loops in nightly | Nightly green for 7 consecutive days; geiger count tracked in the summary — **reproducible-build part done 2026-09-27** (`trim-paths`, stripped ISO kernel, cross-directory second pass in `release.yml`; coverage/Miri/geiger/stress loops still open) |
 | P9.7 | Supply-chain hardening: CodeQL and OpenSSF Scorecard workflows (repo public), `cargo vet` audits for kernel and driver dependencies, `SECURITY.md` process exercised once with a mock report | Scorecard ≥ 7; `cargo vet` passes with no unaudited kernel deps |
 
 ### Phase 10 — Stretch Ideas (pick for fun)
