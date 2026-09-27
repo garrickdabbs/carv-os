@@ -460,7 +460,8 @@ protection, Scorecard and rulesets are all available at no cost.
      and requires the banner (and, from Phase 6, a shell prompt)
   4. produce artifacts: `carv-os-v0.y.z-x86_64.iso`, `carv-os-v0.y.z-data.img.zst`,
      `chisel-v0.y.z.elf` (unstripped kernel with symbols, for debugging crash reports),
-     `SHA256SUMS`, SBOM `carv-os-v0.y.z.cdx.json` (`cargo cyclonedx`)
+     `SHA256SUMS`, SBOMs `carv-os-v0.y.z-<crate>.cdx.json`, one CycloneDX document per workspace
+     crate (`cargo cyclonedx --describe crate`)
   5. **sign & attest:** Sigstore keyless signature of `SHA256SUMS` (`cosign sign-blob` via OIDC,
      `.sigstore` bundle) and **SLSA build provenance** via `actions/attest-build-provenance` for
      every artifact, so `gh attestation verify carv-os-*.iso -R garrickdabbs/carv-os` proves it came
