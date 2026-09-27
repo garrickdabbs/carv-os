@@ -84,8 +84,13 @@ jobs:
       - name: assemble remaining artifacts
         run: |
           zstd -19 -q -o "dist/carv-os-${TAG}-data.img.zst" target/data.img
-          cargo cyclonedx --format json --describe crate --override-filename "carv-os-${TAG}" >/dev/null
-          find . -name "carv-os-${TAG}*.cdx.json" -not -path "./dist/*" -exec cp {} dist/ \;
+          # One CycloneDX document per workspace crate (chisel, xtask); --describe and
+          # --override-filename are mutually exclusive, so rename while copying.
+          cargo cyclonedx --format json --describe crate >/dev/null
+          find . -name "*.cdx.json" -not -path "./dist/*" | while read -r f; do
+            cp "$f" "dist/carv-os-${TAG}-$(basename "$f")"
+          done
+          ls dist/*.cdx.json
           ls -l dist
           (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
 
