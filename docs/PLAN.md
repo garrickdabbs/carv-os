@@ -70,7 +70,7 @@ with the data it changes. Each pillar strengthens the others:
 | Build orchestration | `cargo xtask` pattern (a Rust binary in the workspace) | One command to build, make the image, run, and test. No Makefile sprawl. |
 | Image | ISO via `xorriso` + Limine; data disk as raw `.img` | Standard Limine workflow. |
 | CI | GitHub Actions, QEMU (KVM if `/dev/kvm` exists, otherwise TCG) | Every PR boots the OS and runs the tests. |
-| License | Suggest MIT OR Apache-2.0 (Rust convention); maintainer decides | |
+| License | **MIT** (chosen 2026-09-27) | Simple, permissive, matches the hobby nature of the project. |
 | Release artifacts | ISO + data image + kernel ELF, `SHA256SUMS`, CycloneDX SBOM, Sigstore keyless signature, SLSA provenance attestation | Verifiable downloads with no long-lived signing keys to protect. See §7.5. |
 | Supply chain | Dependabot, `cargo deny`/`audit`/`vet`, SHA-pinned actions, least-privilege workflow permissions | An OS that fixes ambient authority shouldn't ship with ambient authority in its build pipeline. See §7.3. |
 
@@ -641,7 +641,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 
 | Phase | Status | Notes |
 |---|---|---|
-| P0 Scaffolding & Boot | in progress | P0.1–P0.2 done; P0.3 in review; P0.5 (CI, deny, Dependabot, docs gate) and P0.6 (README, CHANGELOG, SECURITY; LICENSE + ADR-0001 pending) in review; P0.7 ruleset pending repo visibility; P0.8 not started |
+| P0 Scaffolding & Boot | in progress | P0.1–P0.2 done; P0.3 in review; P0.5 (CI, deny, Dependabot, docs gate) and P0.6 (README, CHANGELOG, SECURITY, LICENSE done; ADR-0001 pending); P0.7 ruleset pending repo visibility; P0.8 not started |
 | P1 Kernel Core | not started | |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |

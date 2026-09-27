@@ -21,3 +21,4 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - `cargo xtask smoke` (UEFI, BIOS and panic boot scenarios with serial-output checks) and
   `cargo xtask docs-gate` (code changes must carry documentation), the latter also wired as a Claude
   Code Stop hook in `.claude/settings.json`.
+- Licensed under MIT (`LICENSE`; `license = "MIT"` on every workspace crate, checked by `cargo deny`).

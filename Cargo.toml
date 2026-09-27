@@ -9,6 +9,7 @@ default-members = ["xtask"]
 version = "0.0.1"
 edition = "2024"
 repository = "https://github.com/garrickdabbs/carv-os"
+license = "MIT"
 
 [profile.dev]
 panic = "abort"
