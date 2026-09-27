@@ -161,8 +161,8 @@ but the workflow is the same for anyone:
    changes code under `kernel/`, `crates/`, `services/`, `userland/`, `xtask/` or `Cargo.toml`
    without a `CHANGELOG.md` entry; changes `xtask` without updating this README, `CLAUDE.md` or the
    plan; changes CI workflows without updating the plan or README; or changes `docs/abi.md` without
-   an ADR. If a change genuinely needs no docs, write `docs-gate: skip` and the reason in the PR
-   body. The same gate runs as a Claude Code stop hook ([`.claude/settings.json`](.claude/settings.json)),
+   an ADR. Dependabot PRs are exempt. If a change genuinely needs no docs, write `docs-gate: skip` and the
+   reason in the PR body. The same gate runs as a Claude Code stop hook ([`.claude/settings.json`](.claude/settings.json)),
    so agents cannot finish a task with undocumented code.
 4. Every `unsafe` block carries a `// SAFETY:` comment. Kernel code never adds a way around
    capability checks.
