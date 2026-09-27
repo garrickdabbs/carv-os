@@ -11,6 +11,12 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   (the `v0.1.1-rc.2` publish job needed a manual re-run) (#76).
 
 ### Added
+- P1.6: ACPI tables — `platform::acpi` parses the RSDP Limine hands over with the `acpi` crate (5.x, `alloc`),
+  reaching tables through the HHDM (a region with pages the direct map skips is mapped whole, read-only and
+  cached, into a small window via the new `paging::map_reserved`), and keeps a
+  `Summary`: table signatures, MADT local-APIC address, CPU APIC ids and I/O APICs, HPET base, and MCFG ECAM
+  regions for P1.7. Boot prints all of it; the UEFI/BIOS smoke scenarios expect the HPET line; an in-kernel test
+  checks the MADT, matches the boot CPU's APIC id against the running local APIC, and requires HPET and MCFG.
 - P1.5: local APIC + timer — the legacy 8259 PICs are remapped and masked (`arch::x86_64::pic`), the xAPIC register page is
   mapped uncached at `paging::KERNEL_MMIO_BASE` (new `paging::map_mmio`; Limine's direct map does not cover device
   memory) and enabled (`arch::x86_64::apic`), its timer is calibrated against PIT channel 2

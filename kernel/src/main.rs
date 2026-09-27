@@ -8,7 +8,7 @@
 //! pass/fail code. The physical frame allocator is built from the memory map (P1.2) and the
 //! bootloader's page tables are adopted for map/unmap/translate (P1.3), and a 1 MiB kernel heap
 //! backs `alloc` (P1.4). The legacy PICs are masked and the local APIC timer ticks at 1 kHz on
-//! vector 32 (P1.5). Cmdline words `page-fault-test`, `stack-overflow-test` and `oom-test` exercise the page-fault
+//! vector 32 (P1.5); the ACPI tables are parsed into a platform summary (P1.6). Cmdline words `page-fault-test`, `stack-overflow-test` and `oom-test` exercise the page-fault
 //! handler and the guard-page → double-fault path.
 
 #![no_std]
@@ -31,12 +31,14 @@ use core::panic::PanicInfo;
 
 use limine::memmap::MEMMAP_USABLE;
 use limine::request::{
-    BootloaderInfoRequest, ExecutableCmdlineRequest, HhdmRequest, MemmapRequest, StackSizeRequest,
+    BootloaderInfoRequest, ExecutableCmdlineRequest, HhdmRequest, MemmapRequest, RsdpRequest,
+    StackSizeRequest,
 };
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 
 mod arch;
 mod mm;
+mod platform;
 mod serial;
 mod sync;
 #[cfg(test)]
@@ -78,6 +80,10 @@ static STACK_SIZE: StackSizeRequest = StackSizeRequest::new(64 * 1024);
 #[used]
 #[unsafe(link_section = ".requests_end")]
 static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
+
+#[used]
+#[unsafe(link_section = ".requests")]
+static RSDP: RsdpRequest = RsdpRequest::new();
 
 /// Kernel entry point, named in `linker.ld`. Limine enters here in 64-bit mode with
 /// paging on, interrupts off, and `rsp` pointing at the stack it allocated for us.
@@ -165,6 +171,48 @@ extern "C" fn kmain() -> ! {
             arch::x86_64::apic::TIMER_HZ,
             arch::x86_64::apic::TIMER_VECTOR
         );
+        let rsdp = RSDP
+            .response()
+            .expect("Limine did not provide the RSDP; ACPI is required")
+            .address as u64;
+        let acpi = platform::acpi::init(rsdp, hhdm);
+        kprintln!(
+            "  acpi: RSDP at {:#x} (revision {}), {} tables: {}",
+            acpi.rsdp,
+            acpi.revision,
+            acpi.tables.len(),
+            TableList(&acpi.tables)
+        );
+        kprintln!(
+            "  acpi: MADT: local APIC at {:#x}, {} CPU(s) with APIC id(s) {:?} (this CPU: {}), {} I/O APIC(s){}",
+            acpi.local_apic_address,
+            acpi.cpu_apic_ids.len(),
+            acpi.cpu_apic_ids,
+            arch::x86_64::apic::id(),
+            acpi.io_apics.len(),
+            acpi.io_apics
+                .first()
+                .map(|io| alloc::format!(
+                    " (id {} at {:#x}, GSI base {})",
+                    io.id,
+                    io.address,
+                    io.gsi_base
+                ))
+                .unwrap_or_default()
+        );
+        match acpi.hpet_base {
+            Some(base) => kprintln!("  acpi: HPET at {base:#x}"),
+            None => kprintln!("  acpi: no HPET table"),
+        }
+        for r in &acpi.ecam {
+            kprintln!(
+                "  acpi: MCFG: PCIe segment {} buses {}-{} ECAM at {:#x}",
+                r.segment,
+                r.bus_start,
+                r.bus_end,
+                r.base
+            );
+        }
         kprintln!(
             "  frames: {} free of {} ({} MiB); bitmap {} KiB at {:#x}; self-check ok ({:#x})",
             layout.free_frames,
@@ -212,6 +260,21 @@ extern "C" fn kmain() -> ! {
     kprintln!("  timer: LAPIC timer ticking at 1 kHz ({ticks} ticks in 100 ms)");
     kprintln!("chisel: nothing more to do yet; halting");
     halt_forever()
+}
+
+/// Prints ACPI table signatures space-separated (they are ASCII by specification).
+struct TableList<'a>(&'a [[u8; 4]]);
+
+impl core::fmt::Display for TableList<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for (i, sig) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(" ")?;
+            }
+            f.write_str(core::str::from_utf8(sig).unwrap_or("????"))?;
+        }
+        Ok(())
+    }
 }
 
 /// Makes the stack unusable and raises an exception, so the CPU faults while pushing the

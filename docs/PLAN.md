@@ -540,7 +540,7 @@ phase's interfaces are frozen.
 | P1.3 | Paging: kernel mapper using the HHDM offset, map/unmap/translate | Test maps a fresh page, writes, reads back, unmaps → page fault handler catches access — **done 2026-09-27** (`x86_64::OffsetPageTable` over Limine's CR3 tables; dynamic region at `0xffff9000_00000000`; `pfault` smoke scenario; the deferred recursion-overflow → `#DF` test now runs via a guard-paged stack, `sovflw`) |
 | P1.4 | Kernel heap (`linked_list_allocator` or custom slab) + `alloc` | `Vec`/`Box`/`BTreeMap` work in kernel tests — **done 2026-09-27** (`kernel::mm::heap`: 1 MiB `linked_list_allocator` heap in the dynamic region behind the kernel `SpinLock`, bytes-in-use counter for future budgets) |
 | P1.5 | Local APIC + timer (calibrated against HPET/PIT), disable legacy PIC | Timer ticks at 1 kHz; test counts ticks over a busy wait — **done 2026-09-27** (xAPIC via the HHDM, PIT-calibrated, vector 32; PICs remapped + masked; HPET calibration waits for ACPI in P1.6) |
-| P1.6 | ACPI table parsing (`acpi` crate) for MADT/HPET/MCFG | Boot log lists APIC ID(s) and HPET address |
+| P1.6 | ACPI table parsing (`acpi` crate) for MADT/HPET/MCFG | Boot log lists APIC ID(s) and HPET address — **done 2026-09-27** (`platform::acpi` summary via the HHDM; ECAM regions kept for P1.7) |
 | P1.7 | PCI(e) enumeration via ECAM | Boot log lists virtio-blk and virtio-net devices |
 
 ### Phase 2 — Capabilities, Threads, IPC, Budgets (the heart; freeze the ABI at the end)
@@ -689,7 +689,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | Phase | Status | Notes |
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
-| P1 Kernel Core | in progress | P1.1–P1.5 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz); **next: P1.6 ACPI tables** |
+| P1 Kernel Core | in progress | P1.1–P1.6 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz, ACPI summary); **next: P1.7 PCI(e) enumeration** |
 | P2 Caps/IPC/Budgets | not started | |
 | P3 Runtime & svcmgr | not started | |
 | P4 Drivers | not started | |
