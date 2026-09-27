@@ -175,5 +175,4 @@ controls on this repository.
 
 ## License
 
-To be decided by the maintainer; MIT OR Apache-2.0 (the Rust convention) is proposed. Until a
-`LICENSE` file lands, all rights are reserved.
+[MIT](LICENSE). Copyright (c) 2026 Garrick Dabbs.

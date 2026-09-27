@@ -17,9 +17,6 @@ ignore = []
 
 [licenses]
 version = 2
-# Workspace crates are never published (publish = false) and carry no license field until the
-# maintainer picks one (see README "License"); only third-party licenses are checked here.
-private = { ignore = true }
 # Permissive licenses only. Anything else needs a deliberate decision, not a silent transitive pull.
 allow = [
     "MIT",
