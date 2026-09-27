@@ -89,6 +89,29 @@ fn spinlock_guards_a_value() {
 }
 
 #[test_case]
+fn breakpoint_exception_is_handled_and_resumes() {
+    use core::sync::atomic::Ordering;
+    let before = crate::arch::x86_64::idt::BREAKPOINTS.load(Ordering::Relaxed);
+    x86_64::instructions::interrupts::int3();
+    assert_eq!(
+        crate::arch::x86_64::idt::BREAKPOINTS.load(Ordering::Relaxed),
+        before + 1
+    );
+}
+
+#[test_case]
+fn gdt_selectors_are_live() {
+    use x86_64::instructions::segmentation::{CS, Segment};
+    let sel = crate::arch::x86_64::gdt::selectors();
+    assert_eq!(CS::get_reg(), sel.code);
+    assert_ne!(sel.tss.0, 0);
+    // The double-fault IST slot points into our own stack, 16-byte aligned.
+    let top = crate::arch::x86_64::gdt::double_fault_stack_top().as_u64();
+    assert_ne!(top, 0);
+    assert_eq!(top % 16, 0);
+}
+
+#[test_case]
 fn interrupts_are_disabled_at_boot() {
     // Limine hands us the CPU with IF clear and we have no IDT yet; anything else is a bug.
     assert!(!crate::arch::x86_64::interrupts_enabled());

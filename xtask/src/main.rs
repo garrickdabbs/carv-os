@@ -699,6 +699,12 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
         cmdline: "panic-test",
         expect: &["CarvOS chisel v", "chisel: PANIC at "],
     },
+    Scenario {
+        name: "dfault",
+        bios: false,
+        cmdline: "double-fault-test",
+        expect: &["CarvOS chisel v", "chisel: DOUBLE FAULT"],
+    },
 ];
 
 /// Boots every [`SMOKE_SCENARIOS`] entry in QEMU and checks the serial output. Each run stops as
@@ -1324,8 +1330,8 @@ fn test(args: &[String]) -> Result<(), String> {
     }
     if opts.integration {
         results.push((
-            "boot smoke (UEFI, BIOS, panic)",
-            run_smoke(opts.release, opts.timeout, None).map(|()| "3 scenarios passed".to_string()),
+            "boot smoke (UEFI, BIOS, panic, double fault)",
+            run_smoke(opts.release, opts.timeout, None).map(|()| "4 scenarios passed".to_string()),
         ));
     }
 

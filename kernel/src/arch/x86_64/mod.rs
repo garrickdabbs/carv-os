@@ -1,5 +1,7 @@
-//! x86_64 primitives: port I/O and interrupt-flag control.
+//! x86_64 primitives: descriptor tables, exception handlers, port I/O, interrupt-flag control.
 
+pub mod gdt;
+pub mod idt;
 pub mod port;
 
 /// Returns whether interrupts are currently enabled (RFLAGS.IF).
