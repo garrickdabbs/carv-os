@@ -5,7 +5,8 @@ Read it before starting any task.
 
 ## Commands
 - `cargo xtask build` — build kernel, services, userland
-- `cargo xtask run [--debug]` — boot in QEMU (serial on stdio); `--debug` adds QEMU int/reset logging
+- `cargo xtask image [--release]` — build `target/carv-os.iso` (UEFI + BIOS) and `target/data.img`
+- `cargo xtask run [--release] [--bios] [--debug] [--timeout SECS]` — boot in QEMU (serial on stdio); `--debug` logs int/reset to `target/qemu.log`; always pass `--timeout` in scripts
 - `cargo xtask test` — host unit tests + in-kernel tests + QEMU integration tests. **Must pass before any PR.**
 - `cargo xtask gdb` — boot paused with gdb stub attached
 
