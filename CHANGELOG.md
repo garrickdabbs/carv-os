@@ -7,6 +7,9 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Changed
+- The Claude Code settings file (`.claude/settings.json`, a Stop hook running the docs gate) is no longer
+  committed and `.claude/` is gitignored: a shared hook file runs shell commands on every contributor's machine.
+  Documentation-with-code is enforced by the `docs` CI check alone; a local hook is an optional personal setting.
 - Review follow-ups (threads on #7, #24, #25, #30, #32, #33, #37, #39): the docs gate runs from the base
   branch's `xtask`, checks that `## [Unreleased]` actually gained content, requires a *new* ADR for
   `docs/abi.md`, and only honours a skip marker with a ≥ 20-character reason; `cargo deny` treats duplicate
@@ -45,6 +48,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   scenario prove the double-fault path; in-kernel tests cover `int3` and the loaded selectors.
 
 ### Fixed
+- In-kernel paging tests return their frame to the allocator before panicking when a `map` unexpectedly fails,
+  matching the ownership discipline used everywhere else (#43).
 - `carv-frames::free_range` guards its scan-hint update against out-of-range starts explicitly (the hint could
   never actually move past the bitmap; a test now proves the out-of-range case is harmless) (#38).
 - `release-check` fails instead of silently continuing when `GITHUB_OUTPUT` cannot be written, and the release

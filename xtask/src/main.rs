@@ -949,8 +949,8 @@ const EXIT_DOCS_GATE: i32 = 2;
 
 /// Compares a checkout against the merge-base with `--base` (default `main`) and fails if code
 /// changed without the documentation that must travel with it. Runs in CI on every PR (from the
-/// *base branch's* copy of this tool, so a PR cannot weaken the gate it is judged by) and as a
-/// Claude Code stop hook (`.claude/settings.json`).
+/// *base branch's* copy of this tool, so a PR cannot weaken the gate it is judged by); developers
+/// run it locally before opening a PR (optionally from an uncommitted Claude Code Stop hook).
 ///
 /// Options: `--base REF`, `--repo PATH` (checkout to inspect; default: this workspace).
 /// The PR body may be supplied in `DOCS_GATE_PR_BODY`; a line `docs-gate: skip — <reason>` with a

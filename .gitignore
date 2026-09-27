@@ -29,7 +29,10 @@ SHA256SUMS
 *.profdata
 /coverage/
 
-# Editors, OS, tooling
+# Editors, OS, tooling. Claude Code settings stay local: a committed settings file could carry
+# hooks that run shell commands on every contributor's machine. Opt in to the local docs-gate
+# hook via .claude/settings.local.json (see CLAUDE.md).
+.claude/
 .idea/
 .vscode/*
 !.vscode/extensions.json
