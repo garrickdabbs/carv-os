@@ -1,13 +1,14 @@
 //! PCI(e) enumeration through the MCFG's ECAM window (P1.7).
 //!
 //! Every function's 4 KiB configuration page lives at `ecam_base + (bus << 20 | device << 15 |
-//! function << 12)`. Pages are mapped on demand into the kernel's MMIO region (one page per
-//! probed function, bump-allocated, never unmapped: the enumeration runs once). Bus 0 is walked
-//! first and PCI-to-PCI bridges add their secondary buses. Drivers (P4) will look devices up in
-//! the recorded list; interrupt routing waits for the I/O APIC work in P2.8.
+//! function << 12)`. Probing maps each candidate page into one scratch slot in the kernel's MMIO
+//! region, reads the header, and unmaps it again, so enumeration costs no permanent mappings no
+//! matter how many buses the MCFG advertises. Bus 0 is walked first and PCI-to-PCI bridges add
+//! their secondary buses (only those inside the region's bus range). Drivers (P4) will look devices
+//! up in the recorded list and map their own device's page from `config_phys`; interrupt routing
+//! waits for the I/O APIC work in P2.8.
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU64, Ordering};
 
 use x86_64::structures::paging::Page;
 use x86_64::{PhysAddr, VirtAddr};
@@ -16,10 +17,8 @@ use super::acpi::EcamRegion;
 use crate::mm::paging;
 use crate::sync::{SpinLock, without_interrupts};
 
-/// Window for configuration pages: 4 MiB past the MMIO base, 8 MiB (2048 functions) of room.
-const CONFIG_WINDOW_BASE: u64 = paging::KERNEL_MMIO_BASE + 0x40_0000;
-const CONFIG_WINDOW_SIZE: u64 = 0x80_0000;
-static WINDOW_NEXT: AtomicU64 = AtomicU64::new(CONFIG_WINDOW_BASE);
+/// The one scratch page used to read configuration headers: 4 MiB past the MMIO base.
+const CONFIG_SCRATCH: u64 = paging::KERNEL_MMIO_BASE + 0x40_0000;
 
 /// Red Hat / Qumranet: every virtio device.
 pub const VENDOR_VIRTIO: u16 = 0x1AF4;
@@ -70,25 +69,31 @@ impl PciDevice {
 
 static DEVICES: SpinLock<Vec<PciDevice>> = SpinLock::new(Vec::new());
 
-/// Maps the configuration page for `(bus, device, function)` in `region` and returns its
-/// virtual address.
-fn map_config_page(region: &EcamRegion, bus: u8, device: u8, function: u8) -> u64 {
-    let phys = region.base
+/// Physical address of the configuration page for `(bus, device, function)` in `region`;
+/// `bus` must lie inside the region's bus range.
+fn config_phys(region: &EcamRegion, bus: u8, device: u8, function: u8) -> u64 {
+    debug_assert!((region.bus_start..=region.bus_end).contains(&bus));
+    region.base
         + ((u64::from(bus - region.bus_start) << 20)
             | (u64::from(device) << 15)
-            | (u64::from(function) << 12));
-    let virt = WINDOW_NEXT.fetch_add(0x1000, Ordering::Relaxed);
-    assert!(
-        virt < CONFIG_WINDOW_BASE + CONFIG_WINDOW_SIZE,
-        "PCI configuration window exhausted"
-    );
-    let page = Page::containing_address(VirtAddr::new(virt));
+            | (u64::from(function) << 12))
+}
+
+/// Maps the configuration page at `phys` into the scratch slot, runs `f` on it, unmaps it.
+fn with_config_page<R>(phys: u64, f: impl FnOnce(u64) -> R) -> R {
+    let page = Page::containing_address(VirtAddr::new(CONFIG_SCRATCH));
     // SAFETY: `phys` is inside the ECAM range the firmware reserved for PCIe configuration
-    // space (device memory, never RAM the frame allocator covers).
+    // space (device memory, never RAM the frame allocator covers); the scratch page is unmapped
+    // again below, so nothing else can observe it.
     if let Err(e) = unsafe { paging::map_mmio(page, PhysAddr::new(phys)) } {
         panic!("mapping PCI config page {phys:#x}: {e}");
     }
-    virt
+    let result = f(CONFIG_SCRATCH);
+    // The returned `Frame` is the device page, not allocator memory: it is dropped, never freed.
+    if let Err(e) = paging::unmap(page) {
+        panic!("unmapping PCI config scratch page: {e}");
+    }
+    result
 }
 
 fn read_u32(config: u64, offset: u64) -> u32 {
@@ -97,33 +102,46 @@ fn read_u32(config: u64, offset: u64) -> u32 {
     unsafe { core::ptr::read_volatile((config + offset) as *const u32) }
 }
 
+/// Header facts read in one visit to the scratch page.
+struct Probe {
+    dev: PciDevice,
+    multi_function: bool,
+    /// Secondary bus number when the function is a PCI-to-PCI bridge.
+    secondary_bus: Option<u8>,
+}
+
 /// Reads the header of one function, `None` if no device answers (vendor `0xFFFF`).
-fn probe(region: &EcamRegion, bus: u8, device: u8, function: u8) -> Option<(PciDevice, u64)> {
-    let config = map_config_page(region, bus, device, function);
-    let id = read_u32(config, 0x00);
-    let vendor = (id & 0xFFFF) as u16;
-    if vendor == 0xFFFF {
-        return None;
-    }
-    let class_reg = read_u32(config, 0x08);
-    let header = read_u32(config, 0x0C);
-    let dev = PciDevice {
-        segment: region.segment,
-        bus,
-        device,
-        function,
-        vendor,
-        device_id: (id >> 16) as u16,
-        class: (class_reg >> 24) as u8,
-        subclass: (class_reg >> 16) as u8,
-        prog_if: (class_reg >> 8) as u8,
-        header_type: ((header >> 16) & 0x7F) as u8,
-        config_phys: region.base
-            + ((u64::from(bus - region.bus_start) << 20)
-                | (u64::from(device) << 15)
-                | (u64::from(function) << 12)),
-    };
-    Some((dev, config))
+fn probe(region: &EcamRegion, bus: u8, device: u8, function: u8) -> Option<Probe> {
+    let phys = config_phys(region, bus, device, function);
+    with_config_page(phys, |config| {
+        let id = read_u32(config, 0x00);
+        let vendor = (id & 0xFFFF) as u16;
+        if vendor == 0xFFFF {
+            return None;
+        }
+        let class_reg = read_u32(config, 0x08);
+        let header = read_u32(config, 0x0C);
+        let header_type = ((header >> 16) & 0x7F) as u8;
+        let secondary_bus =
+            (header_type == 1).then(|| ((read_u32(config, 0x18) >> 8) & 0xFF) as u8);
+        Some(Probe {
+            dev: PciDevice {
+                segment: region.segment,
+                bus,
+                device,
+                function,
+                vendor,
+                device_id: (id >> 16) as u16,
+                class: (class_reg >> 24) as u8,
+                subclass: (class_reg >> 16) as u8,
+                prog_if: (class_reg >> 8) as u8,
+                header_type,
+                config_phys: phys,
+            },
+            multi_function: (header >> 16) & 0x80 != 0,
+            secondary_bus,
+        })
+    })
 }
 
 /// Walks every ECAM region: bus 0 of each, plus the secondary buses of the bridges found.
@@ -137,29 +155,26 @@ pub fn enumerate(regions: &[EcamRegion]) -> Vec<PciDevice> {
             let bus = buses[i];
             i += 1;
             for device in 0..32u8 {
-                let Some((dev0, cfg0)) = probe(region, bus, device, 0) else {
+                let Some(first) = probe(region, bus, device, 0) else {
                     continue;
                 };
-                let multi = (read_u32(cfg0, 0x0C) >> 16) & 0x80 != 0;
-                let functions = if multi { 8 } else { 1 };
+                let functions = if first.multi_function { 8 } else { 1 };
+                let mut first = Some(first);
                 for function in 0..functions {
-                    let entry = if function == 0 {
-                        Some((dev0, cfg0))
-                    } else {
-                        probe(region, bus, device, function)
+                    let entry = match first.take() {
+                        Some(p) => Some(p),
+                        None => probe(region, bus, device, function),
                     };
-                    let Some((dev, cfg)) = entry else { continue };
-                    // A PCI-to-PCI bridge (header type 1) exposes its secondary bus at 0x19.
-                    if dev.header_type == 1 {
-                        let secondary = ((read_u32(cfg, 0x18) >> 8) & 0xFF) as u8;
-                        if secondary != 0
-                            && secondary <= region.bus_end
-                            && !buses.contains(&secondary)
-                        {
-                            buses.push(secondary);
-                        }
+                    let Some(p) = entry else { continue };
+                    // A bridge's secondary bus is walked only if this region can address it.
+                    if let Some(secondary) = p.secondary_bus
+                        && secondary != 0
+                        && (region.bus_start..=region.bus_end).contains(&secondary)
+                        && !buses.contains(&secondary)
+                    {
+                        buses.push(secondary);
                     }
-                    found.push(dev);
+                    found.push(p.dev);
                 }
             }
         }

@@ -541,7 +541,7 @@ phase's interfaces are frozen.
 | P1.4 | Kernel heap (`linked_list_allocator` or custom slab) + `alloc` | `Vec`/`Box`/`BTreeMap` work in kernel tests — **done 2026-09-27** (`kernel::mm::heap`: 1 MiB `linked_list_allocator` heap in the dynamic region behind the kernel `SpinLock`, bytes-in-use counter for future budgets) |
 | P1.5 | Local APIC + timer (calibrated against HPET/PIT), disable legacy PIC | Timer ticks at 1 kHz; test counts ticks over a busy wait — **done 2026-09-27** (xAPIC via the HHDM, PIT-calibrated, vector 32; PICs remapped + masked; HPET calibration waits for ACPI in P1.6) |
 | P1.6 | ACPI table parsing (`acpi` crate) for MADT/HPET/MCFG | Boot log lists APIC ID(s) and HPET address — **done 2026-09-27** (`platform::acpi` summary via the HHDM; ECAM regions kept for P1.7) |
-| P1.7 | PCI(e) enumeration via ECAM | Boot log lists virtio-blk and virtio-net devices — **done 2026-09-27** (`platform::pci` over the MCFG regions from P1.6; per-function config pages mapped on demand) |
+| P1.7 | PCI(e) enumeration via ECAM | Boot log lists virtio-blk and virtio-net devices — **done 2026-09-27** (`platform::pci` over the MCFG regions from P1.6; headers read through one scratch mapping, drivers map their own device pages later) |
 
 ### Phase 2 — Capabilities, Threads, IPC, Budgets (the heart; freeze the ABI at the end)
 | ID | Task | AC |
