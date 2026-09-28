@@ -29,10 +29,22 @@ anything to work.
 
 ## Status
 
-Phase 0 (scaffolding and boot) is in progress. Today CarvOS boots under Limine on UEFI and BIOS,
-brings up a serial console, prints what the bootloader handed over, and halts. There is no
-scheduler, no user space, and no filesystem yet. Progress is tracked in
-[`docs/PLAN.md` §11](docs/PLAN.md#11-status-tracker) and [`CHANGELOG.md`](CHANGELOG.md).
+**Phases 0 and 1 are complete** (2026-09-28); the latest release is
+[`v0.1.1`](https://github.com/garrickdabbs/carv-os/releases/tag/v0.1.1), signed, attested and
+byte-for-byte reproducible on any machine. Today CarvOS boots under Limine on UEFI and BIOS and, in
+order: brings up the serial console, loads a GDT/TSS/IDT with a handler for every CPU exception,
+builds a physical frame allocator from the memory map, adopts the bootloader's page tables with its
+own mapper, installs a 1 MiB kernel heap (`alloc` works), masks the legacy PICs and runs the local
+APIC timer at 1 kHz, parses the ACPI tables (MADT, HPET, MCFG), enumerates PCI(e) through ECAM
+(virtio-blk and virtio-net are found), then idles. Fifteen in-kernel tests and seven boot scenarios
+(UEFI, BIOS, panic, double fault, page fault, stack overflow, heap exhaustion) run on every PR.
+
+There is no scheduler, no user space, and no filesystem yet: **Phase 2** (capabilities, threads,
+IPC, budgets, ending in the ABI freeze) is the next milestone and is queued for the maintainer's go.
+Progress is tracked in [`docs/PLAN.md` §11](docs/PLAN.md#11-status-tracker),
+[`CHANGELOG.md`](CHANGELOG.md), and the
+[CarvOS Prototype project board](https://github.com/users/garrickdabbs/projects/3) (one issue per
+plan task, grouped by phase epic).
 
 ## Quick start
 
@@ -60,12 +72,25 @@ git clone https://github.com/garrickdabbs/carv-os.git
 cd carv-os
 cargo xtask run
 ```
-You should see the Limine menu, then:
+You should see the Limine menu, then (abridged):
 ```
 CarvOS chisel v0.1.1 booting
+  gdt/tss/idt: loaded (cs=0x8 ss=0x10 tss=0x18; double-fault IST top 0xffffffff800463f0)
   bootloader: Limine 11.4.1 (base revision 6)
   hhdm offset: 0xffff800000000000
-  memory map: 31 entries, 466 MiB usable
+  memory map: 33 entries, 463 MiB usable
+  paging: adopted CR3 tables; kernel dynamic region at 0xffff900000000000
+  heap: 1024 KiB at 0xffff900010000000 (0 bytes used by the allocator itself)
+  apic: xAPIC id 0 at 0xfee00000 (mapped at 0xffff900020000000); timer 62640 ticks/ms (÷16), periodic at 1000 Hz on vector 32; PICs masked
+  acpi: RSDP at 0x1fec9014 (revision 2), 6 tables: FACP APIC HPET MCFG WAET BGRT
+  acpi: MADT: local APIC at 0xfee00000, 1 CPU(s) with APIC id(s) [0] (this CPU: 0), 1 I/O APIC(s) (id 0 at 0xfec00000, GSI base 0)
+  acpi: HPET at 0xfed00000
+  acpi: MCFG: PCIe segment 0 buses 0-255 ECAM at 0xe0000000
+  pci: 7 function(s) found via ECAM
+  pci: 0000:00:02.0 1af4:1001 class 01.00.00 virtio-blk
+  pci: 0000:00:03.0 1af4:1000 class 02.00.00 virtio-net
+  frames: 118529 free of 123842 (463 MiB); bitmap 30 KiB at 0x0; self-check ok (0x8000)
+  timer: LAPIC timer ticking at 1 kHz (99 ticks in 100 ms)
 chisel: nothing more to do yet; halting
 ```
 Quit QEMU with `Ctrl-A` then `X`.
@@ -173,9 +198,11 @@ A rolling, unsigned `nightly` pre-release tracks `main`. All `0.y.z` releases ar
 ## Repository layout
 
 ```
-kernel/          chisel, the microkernel (no_std, x86_64-unknown-none)
+kernel/          chisel, the microkernel (no_std, x86_64-unknown-none):
+                   arch/x86_64 (GDT, IDT, ports, PIC, PIT, local APIC), mm (frames, paging, heap),
+                   platform (ACPI, PCI), serial console, sync primitives, in-kernel tests
 crates/          pure, host-testable libraries: carv-frames (bitmap frame allocator)
-xtask/           cargo xtask: build, image, run, smoke, docs-gate
+xtask/           cargo xtask: build, limine, image, run, smoke, test, perf, docs-gate, release-check, help
 docs/PLAN.md     design, roadmap with task IDs, GitHub infrastructure, status
 docs/adr/        architecture decision records (as they are written)
 .github/         CI workflows, Dependabot, CODEOWNERS, PR and issue templates
