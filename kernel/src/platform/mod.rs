@@ -1,3 +1,4 @@
-//! Firmware-described platform facts: ACPI tables now (P1.6), PCI(e) enumeration next (P1.7).
+//! Firmware-described platform facts: ACPI tables (P1.6) and PCI(e) enumeration over ECAM (P1.7).
 
 pub mod acpi;
+pub mod pci;

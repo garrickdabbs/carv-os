@@ -331,8 +331,11 @@ fn acpi_summary_lists_apics_hpet_and_ecam() {
     assert!(!s.tables.is_empty(), "no ACPI tables found");
     assert!(
         s.tables.iter().any(|t| t == b"APIC"),
-        "MADT missing from {:?}",
-        s.tables.len()
+        "MADT missing; tables found: {:?}",
+        s.tables
+            .iter()
+            .map(|t| core::str::from_utf8(t).unwrap_or("????"))
+            .collect::<alloc::vec::Vec<_>>()
     );
     assert!(!s.cpu_apic_ids.is_empty(), "MADT lists no processors");
     assert_eq!(
@@ -346,4 +349,33 @@ fn acpi_summary_lists_apics_hpet_and_ecam() {
         s.ecam.iter().any(|r| r.segment == 0 && r.bus_start == 0),
         "q35 has an MCFG with segment 0 starting at bus 0"
     );
+}
+
+#[test_case]
+fn pci_enumeration_finds_virtio_blk_and_net() {
+    use crate::platform::pci;
+    let devs = pci::devices();
+    assert!(!devs.is_empty(), "no PCI functions enumerated");
+    assert!(
+        devs.iter()
+            .any(|d| d.bus == 0 && d.device == 0 && d.vendor == 0x8086),
+        "q35 host bridge 00:00.0 (Intel) missing"
+    );
+    let names: alloc::vec::Vec<&str> = devs.iter().filter_map(|d| d.virtio_name()).collect();
+    assert!(
+        names.contains(&"virtio-blk"),
+        "virtio-blk not found in {names:?}"
+    );
+    assert!(
+        names.contains(&"virtio-net"),
+        "virtio-net not found in {names:?}"
+    );
+    // Class codes must agree with the virtio names: mass storage 01, network 02.
+    for d in &devs {
+        match d.virtio_name() {
+            Some("virtio-blk") => assert_eq!(d.class, 0x01),
+            Some("virtio-net") => assert_eq!(d.class, 0x02),
+            _ => {}
+        }
+    }
 }
