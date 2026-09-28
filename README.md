@@ -202,7 +202,7 @@ kernel/          chisel, the microkernel (no_std, x86_64-unknown-none):
                    arch/x86_64 (GDT, IDT, ports, PIC, PIT, local APIC), mm (frames, paging, heap),
                    platform (ACPI, PCI), serial console, sync primitives, in-kernel tests
 crates/          pure, host-testable libraries: carv-frames (bitmap frame allocator)
-xtask/           cargo xtask: build, image, run, smoke, test, perf, docs-gate, release-check
+xtask/           cargo xtask: build, limine, image, run, smoke, test, perf, docs-gate, release-check, help
 docs/PLAN.md     design, roadmap with task IDs, GitHub infrastructure, status
 docs/adr/        architecture decision records (as they are written)
 .github/         CI workflows, Dependabot, CODEOWNERS, PR and issue templates
