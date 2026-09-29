@@ -56,16 +56,15 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
 name = "carv-budget"
 version = "0.1.1"
-=======
+
+[[package]]
 name = "carv-caps"
 version = "0.1.1"
 dependencies = [
  "proptest",
 ]
->>>>>>> origin/main
 
 [[package]]
 name = "carv-frames"
