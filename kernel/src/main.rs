@@ -1,16 +1,16 @@
 //! chisel: the CarvOS microkernel.
 //!
-//! P1.1 state: Limine boots us, the 16550 boot console comes up, the GDT/TSS/IDT are loaded so
-//! every CPU exception prints a message (double faults on their own IST stack), we print the
-//! banner and what the bootloader handed over, and halt. Kernel command line words `panic-test`
-//! and `double-fault-test` exercise the panic handler and the double-fault path. In test builds
-//! (`cargo xtask test --kernel`) `kmain` runs the in-kernel tests instead and exits QEMU with a
-//! pass/fail code. The physical frame allocator is built from the memory map (P1.2) and the
-//! bootloader's page tables are adopted for map/unmap/translate (P1.3), and a 1 MiB kernel heap
-//! backs `alloc` (P1.4). The legacy PICs are masked and the local APIC timer ticks at 1 kHz on
-//! vector 32 (P1.5); the ACPI tables are parsed into a platform summary (P1.6) and PCI(e) is
-//! enumerated through the MCFG's ECAM window (P1.7). Cmdline words `page-fault-test`, `stack-overflow-test` and `oom-test` exercise the page-fault
-//! handler and the guard-page → double-fault path.
+//! Boot sequence today (P1.1–P1.7): Limine hands over control, the 16550 boot console comes up,
+//! the GDT/TSS/IDT are loaded so every CPU exception prints a message (double faults on their own
+//! IST stack), the physical frame allocator is built from the memory map (P1.2), the bootloader's
+//! page tables are adopted for map/unmap/translate (P1.3), a 1 MiB kernel heap backs `alloc`
+//! (P1.4), the legacy PICs are masked and the local APIC timer ticks at 1 kHz on vector 32 (P1.5),
+//! the ACPI tables are parsed into a platform summary (P1.6), and PCI(e) is enumerated through the
+//! MCFG's ECAM window (P1.7); `kmain` then prints the banner and halts. In test builds (`cargo
+//! xtask test --kernel`) `kmain` runs the in-kernel tests instead and exits QEMU with a pass/fail
+//! code. Kernel command line words `panic-test`, `double-fault-test`, `page-fault-test`,
+//! `stack-overflow-test` and `oom-test` exercise the panic handler, the double-fault path, the
+//! page-fault handler and the guard-page → double-fault path.
 
 #![no_std]
 #![no_main]
@@ -73,6 +73,10 @@ static HHDM: HhdmRequest = HhdmRequest::new();
 #[unsafe(link_section = ".requests")]
 static MEMMAP: MemmapRequest = MemmapRequest::new();
 
+#[used]
+#[unsafe(link_section = ".requests")]
+static RSDP: RsdpRequest = RsdpRequest::new();
+
 /// 64 KiB boot stack; the default is smaller than the kernel will want once paging code lands.
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -81,10 +85,6 @@ static STACK_SIZE: StackSizeRequest = StackSizeRequest::new(64 * 1024);
 #[used]
 #[unsafe(link_section = ".requests_end")]
 static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
-
-#[used]
-#[unsafe(link_section = ".requests")]
-static RSDP: RsdpRequest = RsdpRequest::new();
 
 /// Kernel entry point, named in `linker.ld`. Limine enters here in 64-bit mode with
 /// paging on, interrupts off, and `rsp` pointing at the stack it allocated for us.
@@ -345,9 +345,6 @@ fn force_page_fault() -> ! {
     unreachable!("read of an unmapped page did not fault");
 }
 
-/// Switches to a small kernel stack that has an unmapped guard page beneath it, then recurses
-/// until the stack overflows into the guard: the write faults, the `#PF` handler cannot push its
-/// frame onto the exhausted stack, and the CPU escalates to `#DF` on the IST stack.
 /// Asks the heap for more than it holds so the allocation-error path runs: `alloc_error` must
 /// report `kernel heap exhausted` and end in the panic handler.
 fn force_oom() -> ! {
@@ -376,9 +373,12 @@ fn alloc_error(layout: core::alloc::Layout) -> ! {
     );
 }
 
+/// Switches to a small kernel stack that has an unmapped guard page beneath it, then recurses
+/// until the stack overflows into the guard: the write faults, the `#PF` handler cannot push its
+/// frame onto the exhausted stack, and the CPU escalates to `#DF` on the IST stack.
 fn force_stack_overflow() -> ! {
     use x86_64::VirtAddr;
-    // Guard page at TEST_STACK_BASE - 4 KiB stays unmapped; four mapped pages above it.
+    // The guard page one page below `base` stays unmapped; four mapped pages sit above it.
     let base = VirtAddr::new(mm::paging::KERNEL_DYNAMIC_BASE + 0x20_0000);
     let top = mm::paging::map_stack_with_guard(base, 4);
     kprintln!(
