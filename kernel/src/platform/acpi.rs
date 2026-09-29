@@ -13,11 +13,9 @@ use alloc::vec::Vec;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use acpi::hpet::HpetInfo;
-use acpi::mcfg::PciConfigRegions;
 use acpi::platform::interrupt::InterruptModel;
-use acpi::rsdp::Rsdp;
-use acpi::{AcpiHandler, AcpiTables, PhysicalMapping};
+use acpi::platform::pci::PciConfigRegions;
+use acpi::{AcpiTables, Handler, HpetInfo, PciAddress, PhysicalMapping};
 use x86_64::structures::paging::Page;
 use x86_64::{PhysAddr, VirtAddr};
 
@@ -115,29 +113,133 @@ impl HhdmHandler {
     }
 }
 
-impl AcpiHandler for HhdmHandler {
+impl Handler for HhdmHandler {
     unsafe fn map_physical_region<T>(
         &self,
         physical_address: usize,
         size: usize,
     ) -> PhysicalMapping<Self, T> {
         let virt = self.virt_for_region(physical_address as u64, size as u64);
-        // SAFETY: `virt` is one contiguous live mapping of `physical_address`, valid for `size`
-        // bytes (see `virt_for_region`).
-        unsafe {
-            PhysicalMapping::new(
-                physical_address,
-                NonNull::new(virt as *mut T).expect("ACPI mapping is never null"),
-                size,
-                size,
-                self.clone(),
-            )
+        PhysicalMapping {
+            physical_start: physical_address,
+            virtual_start: NonNull::new(virt as *mut T).expect("ACPI mapping is never null"),
+            region_length: size,
+            mapped_length: size,
+            handler: self.clone(),
         }
     }
 
     fn unmap_physical_region<T>(_region: &PhysicalMapping<Self, T>) {
         // HHDM aliases need no teardown; window pages stay mapped (see the module doc).
     }
+
+    fn read_u8(&self, _address: usize) -> u8 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn read_u16(&self, _address: usize) -> u16 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn read_u32(&self, _address: usize) -> u32 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn read_u64(&self, _address: usize) -> u64 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn write_u8(&self, _address: usize, _value: u8) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn write_u16(&self, _address: usize, _value: u16) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn write_u32(&self, _address: usize, _value: u32) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn write_u64(&self, _address: usize, _value: u64) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn read_io_u8(&self, _port: u16) -> u8 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn read_io_u16(&self, _port: u16) -> u16 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn read_io_u32(&self, _port: u16) -> u32 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn write_io_u8(&self, _port: u16, _value: u8) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn write_io_u16(&self, _port: u16, _value: u16) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn write_io_u32(&self, _port: u16, _value: u32) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn read_pci_u8(&self, _address: PciAddress, _offset: u16) -> u8 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn read_pci_u16(&self, _address: PciAddress, _offset: u16) -> u16 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn read_pci_u32(&self, _address: PciAddress, _offset: u16) -> u32 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn write_pci_u8(&self, _address: PciAddress, _offset: u16, _value: u8) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn write_pci_u16(&self, _address: PciAddress, _offset: u16, _value: u16) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn write_pci_u32(&self, _address: PciAddress, _offset: u16, _value: u32) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn nanos_since_boot(&self) -> u64 {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn stall(&self, _microseconds: u64) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn sleep(&self, _milliseconds: u64) {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn create_mutex(&self) -> acpi::Handle {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn acquire(&self, _mutex: acpi::Handle, _timeout: u16) -> Result<(), acpi::aml::AmlError> {
+        unsupported_acpi_hardware_access()
+    }
+
+    fn release(&self, _mutex: acpi::Handle) {
+        unsupported_acpi_hardware_access()
+    }
+}
+
+fn unsupported_acpi_hardware_access() -> ! {
+    panic!("ACPI hardware access is not implemented")
 }
 
 /// Parses the tables reachable from `rsdp` (Limine's RSDP response; an HHDM-virtual address is
@@ -149,21 +251,16 @@ impl AcpiHandler for HhdmHandler {
 pub fn init(rsdp: u64, hhdm: u64) -> Summary {
     let rsdp_phys = if rsdp >= hhdm { rsdp - hhdm } else { rsdp };
     let handler = HhdmHandler { hhdm };
-    // SAFETY: `rsdp_phys` is the RSDP the bootloader located, so an `Rsdp` structure lives there.
-    let revision = unsafe {
-        handler.map_physical_region::<Rsdp>(rsdp_phys as usize, core::mem::size_of::<Rsdp>())
-    }
-    .revision();
     // SAFETY: as above; the handler maps whatever the parser asks for.
-    let tables = unsafe { AcpiTables::from_rsdp(handler, rsdp_phys as usize) }
+    let tables = unsafe { AcpiTables::from_rsdp(handler.clone(), rsdp_phys as usize) }
         .unwrap_or_else(|e| panic!("ACPI: parsing tables from RSDP {rsdp_phys:#x}: {e:?}"));
 
     let mut summary = Summary {
         rsdp: rsdp_phys,
-        revision,
+        revision: tables.rsdp_revision,
         tables: tables
-            .headers()
-            .map(|h| {
+            .table_headers()
+            .map(|(_, h)| {
                 let mut sig = [0u8; 4];
                 sig.copy_from_slice(h.signature.as_str().as_bytes());
                 sig
@@ -172,10 +269,9 @@ pub fn init(rsdp: u64, hhdm: u64) -> Summary {
         ..Summary::default()
     };
 
-    let platform = tables
-        .platform_info()
-        .unwrap_or_else(|e| panic!("ACPI: MADT/platform info: {e:?}"));
-    if let InterruptModel::Apic(apic) = &platform.interrupt_model {
+    let (interrupt_model, processor_info) =
+        InterruptModel::new(&tables).unwrap_or_else(|e| panic!("ACPI: MADT/platform info: {e:?}"));
+    if let InterruptModel::Apic(apic) = &interrupt_model {
         summary.local_apic_address = apic.local_apic_address;
         summary.io_apics = apic
             .io_apics
@@ -187,7 +283,7 @@ pub fn init(rsdp: u64, hhdm: u64) -> Summary {
             })
             .collect();
     }
-    if let Some(cpus) = &platform.processor_info {
+    if let Some(cpus) = &processor_info {
         summary.cpu_apic_ids.push(cpus.boot_processor.local_apic_id);
         summary
             .cpu_apic_ids
@@ -196,12 +292,13 @@ pub fn init(rsdp: u64, hhdm: u64) -> Summary {
     summary.hpet_base = HpetInfo::new(&tables).ok().map(|h| h.base_address as u64);
     if let Ok(regions) = PciConfigRegions::new(&tables) {
         summary.ecam = regions
+            .regions
             .iter()
             .map(|r| EcamRegion {
-                segment: r.segment_group,
-                bus_start: *r.bus_range.start(),
-                bus_end: *r.bus_range.end(),
-                base: r.physical_address as u64,
+                segment: r.pci_segment_group,
+                bus_start: r.bus_number_start,
+                bus_end: r.bus_number_end,
+                base: r.base_address,
             })
             .collect();
     }
