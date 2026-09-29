@@ -250,8 +250,9 @@ fn paging_refuses_pages_outside_the_dynamic_region() {
 
 #[test_case]
 fn interrupts_are_disabled_at_boot() {
-    // Limine hands us the CPU with IF clear; the IDT is loaded before tests run, but interrupts
-    // stay off until `kmain` enables them once the tests have finished. Anything else is a bug.
+    // Limine hands us the CPU with IF clear; the IDT is loaded before tests run, but a test build's
+    // `test::runner` exits QEMU directly and never returns to the `enable_interrupts()` call later
+    // in `kmain`, so interrupts stay off for the whole test run. Anything else is a bug.
     assert!(!crate::arch::x86_64::interrupts_enabled());
 }
 

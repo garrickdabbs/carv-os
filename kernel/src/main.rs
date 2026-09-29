@@ -1,14 +1,16 @@
 //! chisel: the CarvOS microkernel.
 //!
-//! Boot sequence today (P1.1–P1.7): Limine hands over control, the 16550 boot console comes up,
-//! the GDT/TSS/IDT are loaded so every CPU exception prints a message (double faults on their own
-//! IST stack), the physical frame allocator is built from the memory map (P1.2), the bootloader's
-//! page tables are adopted for map/unmap/translate (P1.3), a 1 MiB kernel heap backs `alloc`
-//! (P1.4), the legacy PICs are masked and the local APIC timer ticks at 1 kHz on vector 32 (P1.5),
-//! the ACPI tables are parsed into a platform summary (P1.6), and PCI(e) is enumerated through the
-//! MCFG's ECAM window (P1.7); `kmain` then prints the banner and halts. In test builds (`cargo
-//! xtask test --kernel`) `kmain` runs the in-kernel tests instead and exits QEMU with a pass/fail
-//! code. Kernel command line words `panic-test`, `double-fault-test`, `page-fault-test`,
+//! Boot sequence today (P1.1–P1.7): Limine hands over control, `kmain` brings up the 16550 serial
+//! console and prints the boot banner immediately, then loads the GDT/TSS/IDT so every CPU
+//! exception prints a message (double faults on their own IST stack), builds the physical frame
+//! allocator from the memory map (P1.2), adopts the bootloader's page tables for
+//! map/unmap/translate (P1.3), backs `alloc` with a 1 MiB kernel heap (P1.4), masks the legacy
+//! PICs (P1.5), parses the ACPI tables into a platform summary (P1.6), and enumerates PCI(e)
+//! through the MCFG's ECAM window (P1.7). In test builds (`cargo xtask test --kernel`) `kmain`
+//! then runs the in-kernel tests instead of the rest of this sequence: `test::runner` exits QEMU
+//! directly and never returns, so interrupts stay disabled for the whole test run. In a normal
+//! boot, `kmain` instead enables interrupts, validates the local APIC timer ticks at 1 kHz, and
+//! halts. Kernel command line words `panic-test`, `double-fault-test`, `page-fault-test`,
 //! `stack-overflow-test` and `oom-test` exercise the panic handler, the double-fault path, the
 //! page-fault handler and the guard-page → double-fault path.
 
