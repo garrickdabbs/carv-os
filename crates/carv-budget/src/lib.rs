@@ -176,7 +176,7 @@ impl Budget {
     ///
     /// # Errors
     /// Returns [`BudgetError::CpuLimitExceeded`] or [`BudgetError::MemoryLimitExceeded`] if either
-    /// requested child limit cannot be reserved. Neither budget changes on error.
+    /// requested child limit cannot be reserved. Child reservations are not changed on error.
     pub fn carve_out(
         &mut self,
         cpu_budget_ns: u64,
@@ -307,6 +307,11 @@ mod tests {
 
         assert_eq!(child.limits().cpu_budget_ns(), 40);
         assert_eq!(child.limits().memory_bytes(), 500);
+        assert_eq!(child.cpu_remaining_ns(), 20);
+        assert_eq!(
+            child.charge_memory(301),
+            Err(BudgetError::MemoryLimitReached)
+        );
         assert_eq!(grandchild.limits().cpu_budget_ns(), 20);
         assert_eq!(grandchild.limits().memory_bytes(), 200);
         assert_eq!(
