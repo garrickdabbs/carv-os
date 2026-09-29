@@ -230,7 +230,7 @@ carv-os/
 │   │   ├── perf.yml            # `perf`: cargo xtask perf size/boot-time budgets
 │   │   ├── codeql.yml         # code scanning (public repo), advisory only
 │   │   ├── scorecard.yml      # OpenSSF Scorecard (public repo), advisory only
-│   │   ├── nightly.yml        # fuzz, Miri, audit, geiger, stress loops, toolchain drift, nightly pre-release, "Nightly is failing" issue (§7.4)
+│   │   ├── nightly.yml        # stress loops, perf budgets, cargo audit, toolchain drift, nightly pre-release (fuzz/Miri/geiger planned but not yet wired in, §7.3/§9.6; "Nightly is failing" issue automation not yet implemented, §7.4)
 │   │   └── release.yml        # tag v* → reproducible ISO, tests, SBOM, Sigstore signature, attestation, Release
 │   ├── dependabot.yml         # cargo + github-actions, weekly, grouped
 │   ├── release.yml            # release-notes categories by task prefix
@@ -362,9 +362,10 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
   columns *Backlog → Ready → In progress → In review → Done*. The §11 status table summarizes the board.
 - **Board mechanics (set up 2026-09-27):** the *CarvOS Prototype* user project (#3) with Status
   *Backlog / Ready / In progress / In review / Done*, 14-day iterations (Iteration 1 from 2026-09-26;
-  Phase N's tasks sit in Iteration N, when that iteration exists — only Iterations 1–5 are configured
-  as of this PR, so Phase 7–9 epics/tasks are Backlog with no iteration until Iterations 7–9 are
-  added). Phase epics #46 (P1), #55 (P2), #66 (P3), #78 (P4), #83 (P5), #90 (P6), #104 (P7), #110
+  Phase N's tasks sit in Iteration N, when that iteration exists — only Iterations 1–5 are
+  configured as of this PR (through 2026-12-05), so Phase 6's epic (#90) is already Backlog with
+  no iteration, and Phase 7–9 epics/tasks are Backlog with no iteration too, until Iterations 6–9
+  are added). Phase epics #46 (P1), #55 (P2), #66 (P3), #78 (P4), #83 (P5), #90 (P6), #104 (P7), #110
   (P8) and #118 (P9) hold one sub-issue per task ID with the AC copied from §8; the epic's sub-issue
   counter is the phase progress. Built-in project workflows do the automatic moves: auto-add on creation,
   item closed → Done, PR merged → Done, PR linked to issue, auto-close issue when set to Done,
@@ -436,7 +437,7 @@ Details:
 | Dependency updates | **Dependabot** for `cargo` and `github-actions`, weekly, grouped minor/patch | `.github/dependabot.yml` |
 | Vulnerable / unlicensed / duplicate deps | **`cargo deny`** (`advisories`, `licenses` allow-list: MIT, Apache-2.0, BSD-2/3, ISC, Zlib, Unicode-3.0; `bans`: duplicate versions are an *error*; `sources` = crates.io only) | `deny.toml`, `security` job |
 | Fresh advisories without a code change | **`cargo audit`** on the nightly schedule (advisory DB moves even when code doesn't) | `nightly.yml` |
-| Unsafe-code discipline (mechanizes the CLAUDE.md rule) — *partially live* | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(unsafe_op_in_unsafe_fn)]` + `#![deny(missing_docs)]` in every crate root — *live*; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `carv-rt` — *live*; `cargo geiger` unsafe-count report posted to the PR summary — **deferred to P9.6** (not in any workflow yet, consistent with §11 "deferred to later tasks") | crate roots, `lint` job |
+| Unsafe-code discipline (mechanizes the CLAUDE.md rule) — *partially live* | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(missing_docs)]` in every crate root — *live*; `#![deny(unsafe_op_in_unsafe_fn)]` in the kernel crate root (`kernel/src/main.rs`), the only crate with `unsafe fn`s today — *live*; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `carv-rt` — *live*; `cargo geiger` unsafe-count report posted to the PR summary — **deferred to P9.6** (not in any workflow yet, consistent with §11 "deferred to later tasks") | crate roots, `build.yml` (clippy) and `security.yml` (unsafe inventory) |
 | Undefined behaviour in host-testable code | **Miri**: `cargo miri test` on the pure crates (`carv-caps`, `carv-value`, `carv-vstore-core`, `carv-budget`) | `nightly.yml` |
 | Fuzzing (P9.3) | `cargo fuzz` for 20 min per target nightly; corpus cached as an artifact; a crash uploads the input and opens/updates an issue labeled `kind:security` | `nightly.yml` |
 | Actions supply chain | Every action pinned to a **full commit SHA** (Dependabot bumps them); top-level `permissions: contents: read`, elevated per job only (`id-token: write`, `attestations: write`, `contents: write` for release); no long-lived secrets anywhere, signing is keyless via OIDC | all workflows |
@@ -539,9 +540,9 @@ phase's interfaces are frozen.
 | P0.2 | `xtask`: build, fetch/pin Limine, make ISO, run QEMU, detect KVM | `cargo xtask run` boots to the Limine menu, then the kernel — **done 2026-09-27** |
 | P0.3 | Serial driver (16550) + `kprintln!` macro + panic handler printing to serial | Serial shows `CarvOS chisel v0.0.1 booting` — **done 2026-09-27** |
 | P0.4 | `isa-debug-exit` + in-kernel test framework | `cargo xtask test` runs a trivial test, QEMU exits with the pass code — **done 2026-09-27**: 5 `#[test_case]`s, exit 33/35 mapped by `xtask`, `test` runs host + kernel + smoke layers |
-| P0.5 | `ci.yml` per §7.2: lint (fmt, clippy both targets, doc, `cargo deny`), host tests (`cargo test`; nextest + JUnit deferred to P9.6), kernel tests and integration tests in QEMU with KVM enabled, five required checks; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows the five required checks (`build`, `boot-smoke`, `security`, `docs`, `perf`) green; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR — **done 2026-09-27**. History: an initial single required `all-green` check existed briefly before the split into one workflow per README badge (§7.2) |
+| P0.5 | Lint (fmt, clippy both targets, doc, `cargo deny`), host tests (`cargo test`; nextest + JUnit deferred to P9.6), kernel tests and integration tests in QEMU with KVM enabled, five required checks — now delivered as `build.yml`, `ci.yml`, `security.yml`, `docs.yml` and `perf.yml` per §7.2 rather than one `ci.yml`; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows the five required checks (`build`, `boot-smoke`, `security`, `docs`, `perf`) green; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR — **done 2026-09-27**. History: an initial single required `all-green` check existed briefly before the split into one workflow per README badge (§7.2) |
 | P0.6 | `README.md` (build, run, verify-a-release sections), `docs/adr/0001-microkernel-rust-x86_64.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE` | Files exist; README badges for CI and Scorecard render — **done 2026-09-27** |
-| P0.7 | Repo governance per §7.1: `main` ruleset (PR + the five required checks, merge commits only, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board, fine-grained PAT for agents | Direct push to `main` is rejected; a PR without all five checks green can't merge; agent token can't merge — **done 2026-09-27**: the live `main` ruleset (`gh api repos/garrickdabbs/carv-os/rulesets`) requires `build`, `boot-smoke`, `security`, `docs` and `perf`, allows merge commits only (not linear history/squash), requires review-thread resolution and has no bypass, matching §7.1. The fine-grained agent PAT is still outstanding — see §11 "Open maintainer decisions" |
+| P0.7 | Repo governance per §7.1: `main` ruleset (PR + the five required checks, merge commits only, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board, fine-grained PAT for agents | Direct push to `main` is rejected; a PR without all five checks green can't merge; agent token can't merge — **partial, 2026-09-27**: the live `main` ruleset (`gh api repos/garrickdabbs/carv-os/rulesets`) requires `build`, `boot-smoke`, `security`, `docs` and `perf`, allows merge commits only (not linear history/squash), requires review-thread resolution and has no bypass, matching §7.1; `CODEOWNERS`, templates, labels and the Project board are in place. **Not done:** the fine-grained agent PAT — agents still run under the maintainer's own admin `gh` login, so the "agent token can't merge" AC is unverified. Tracked in §11 "Open maintainer decisions" |
 | P0.8 | `release.yml` per §7.5 + `cargo xtask release-check`: reproducible ISO, tests against artifacts, boot-smoke, SHA256SUMS, SBOM, Sigstore signature, build provenance attestation, GitHub Release with generated notes. `nightly.yml` (daily tests, stress, perf, audit, toolchain drift, rolling `nightly` pre-release) | Tag `v0.1.0` produces a release whose ISO boots to the banner and passes `gh attestation verify`; two runs produce identical ISO hashes — **pipeline landed 2026-09-27; validated with `v0.1.0-rc.1`, then `v0.1.0`** |
 
 ### Phase 1 — Kernel Core
@@ -551,7 +552,7 @@ phase's interfaces are frozen.
 | P1.2 | Physical frame allocator from the Limine memory map (bitmap or buddy) | Kernel test: allocate/free 10k frames, no duplicates, count restored — **done 2026-09-27** (`crates/carv-frames` bitmap core, host-tested; kernel wrapper carves the bitmap from usable RAM via the HHDM) |
 | P1.3 | Paging: kernel mapper using the HHDM offset, map/unmap/translate | Test maps a fresh page, writes, reads back, unmaps → page fault handler catches access — **done 2026-09-27** (`x86_64::OffsetPageTable` over Limine's CR3 tables; dynamic region at `0xffff9000_00000000`; `pfault` smoke scenario; the deferred recursion-overflow → `#DF` test now runs via a guard-paged stack, `sovflw`) |
 | P1.4 | Kernel heap (`linked_list_allocator` or custom slab) + `alloc` | `Vec`/`Box`/`BTreeMap` work in kernel tests — **done 2026-09-27** (`kernel::mm::heap`: 1 MiB `linked_list_allocator` heap in the dynamic region behind the kernel `SpinLock`, bytes-in-use counter for future budgets) |
-| P1.5 | Local APIC + timer (calibrated against HPET/PIT), disable legacy PIC | Timer ticks at 1 kHz; test counts ticks over a busy wait — **done 2026-09-27** (xAPIC via the HHDM, PIT-calibrated, vector 32; PICs remapped + masked; HPET calibration deferred to #126, tracked below now that P1.6 has landed) |
+| P1.5 | Local APIC + timer (calibrated against HPET/PIT), disable legacy PIC | Timer ticks at 1 kHz; test counts ticks over a busy wait — **done 2026-09-27** (xAPIC via the HHDM, PIT-calibrated, vector 32; PICs remapped + masked; HPET calibration deferred to issue #126, filed now that P1.6 has landed and parses the HPET base address) |
 | P1.6 | ACPI table parsing (`acpi` crate) for MADT/HPET/MCFG | Boot log lists APIC ID(s) and HPET address — **done 2026-09-27** (`platform::acpi` summary via the HHDM; ECAM regions kept for P1.7) |
 | P1.7 | PCI(e) enumeration via ECAM | Boot log lists virtio-blk and virtio-net devices — **done 2026-09-27** (`platform::pci` over the MCFG regions from P1.6; headers read through one scratch mapping, drivers map their own device pages later) |
 
@@ -706,10 +707,10 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | P3 Runtime & svcmgr | not started | Epic #66 |
 | P4 Drivers | not started | Epic #78 |
 | P5 Versioned Store | not started | Epic #83 |
-| P6 Shell & Coreutils | not started | Epic #90 |
+| P6 Shell & Coreutils | not started | Epic #90; no iteration assigned yet — only Iterations 1–5 exist |
 | P7 Users & Auth | not started | Epic #104 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist |
 | P8 Networking | not started | Epic #110 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist |
-| P9 Hardening | partial | Epic #118 (created 2026-09-29). Landed early: CodeQL + Scorecard workflows (P9.7, Phase 0), reproducible builds across machines (P9.6 part, #42, 2026-09-27). Rest not started |
+| P9 Hardening | partial | Epic #118 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist. Landed early: CodeQL + Scorecard workflows (P9.7, Phase 0), reproducible builds across machines (P9.6 part, #42, 2026-09-27). Rest not started |
 
 (Better: mirror these as GitHub Issues with a Project board; one issue per task ID, labeled by phase.)
 
