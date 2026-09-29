@@ -30,6 +30,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   (the `v0.1.1-rc.2` publish job needed a manual re-run) (#76).
 
 ### Added
+- P2.3: `carv-budget`, a pure host-testable `no_std` crate for CPU period refills, memory charges,
+  hierarchical child-limit carve-outs, and rate-limited token buckets.
 - `nightly.yml`: a `report-status` job (`issues: write` only, `needs: [nightly, publish]`,
   `if: always()`) creates or updates a single pinned "Nightly is failing" issue with a link to the
   run when nightly fails, and closes it with a comment the next time nightly is green (PLAN.md

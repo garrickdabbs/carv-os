@@ -1,0 +1,10 @@
+[package]
+name = "carv-budget"
+description = "CPU, memory, and token-bucket budget accounting for CarvOS (pure, no_std, host-testable)"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
