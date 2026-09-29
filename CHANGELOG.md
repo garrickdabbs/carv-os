@@ -12,6 +12,16 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   parsed (20bcd7d, #100).
 
 ### Changed
+- Kernel doc-comment cleanup, no behaviour change: `force_stack_overflow`'s doc comment (which had
+  been misattached to `force_oom`) now sits on the right function; the module doc no longer opens
+  with the stale "P1.1 state" wording and now describes the actual order (banner right after
+  serial init, interrupts enabled and the LAPIC timer validated just before halting); the
+  guard-page comment in `force_stack_overflow` is worded in terms of `base` instead of a
+  nonexistent `TEST_STACK_BASE` constant; the `RSDP` request static moved up next to the other
+  Limine requests for readability; and the `interrupts_are_disabled_at_boot` test comment now says
+  interrupts stay disabled for the whole test run (a test build's `test::runner` exits QEMU
+  directly and never reaches `kmain`'s later `enable_interrupts()` call), instead of claiming there
+  is no IDT yet.
 - `release.yml` retries `cosign sign-blob` up to four times with backoff on transient Sigstore network errors
   (the `v0.1.1-rc.2` publish job needed a manual re-run) (#76).
 
