@@ -3,10 +3,17 @@ cargo-features = ["trim-paths"]
 
 [workspace]
 resolver = "3"
+<<<<<<< HEAD
 members = ["kernel", "xtask", "crates/carv-frames", "crates/carv-budget"]
 # The kernel only builds for x86_64-unknown-none, so plain `cargo build`/`cargo test`
 # at the root skip it. Use `cargo xtask build` to build everything.
 default-members = ["xtask", "crates/carv-frames", "crates/carv-budget"]
+=======
+members = ["kernel", "xtask", "crates/carv-frames", "crates/carv-caps"]
+# The kernel only builds for x86_64-unknown-none, so plain `cargo build`/`cargo test`
+# at the root skip it. Use `cargo xtask build` to build everything.
+default-members = ["xtask", "crates/carv-frames", "crates/carv-caps"]
+>>>>>>> origin/main
 
 [workspace.package]
 version = "0.1.1"
