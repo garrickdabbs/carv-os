@@ -6,6 +6,10 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Added
+- P2.2: `carv-caps`, a pure `no_std` capability-space library with fixed slots, attenuating copy and
+  badge minting, derivation tracking, descendant revocation, and proptest coverage.
+
 ### Fixed
 - ACPI MADT existence assertion in `kernel/src/test.rs` now prints the parsed table names
   (`s.tables`) instead of a table count, so a missing-MADT failure shows which tables were actually

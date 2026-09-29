@@ -1,0 +1,13 @@
+[package]
+name = "carv-caps"
+description = "Capability spaces and derivation logic for CarvOS (pure, no_std, host-testable)"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1.11.0"
