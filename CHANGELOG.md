@@ -11,6 +11,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   badge minting, derivation tracking, descendant revocation, and proptest coverage.
 
 ### Fixed
+- P1.6: migrate ACPI table parsing to `acpi` 6.1.1, including the expanded `Handler` contract,
+  revised table iteration and platform/MCFG APIs.
 - ACPI MADT existence assertion in `kernel/src/test.rs` now prints the parsed table names
   (`s.tables`) instead of a table count, so a missing-MADT failure shows which tables were actually
   parsed (20bcd7d, #100).
