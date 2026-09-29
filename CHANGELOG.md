@@ -6,6 +6,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Fixed
+- ACPI MADT existence assertion in `kernel/src/test.rs` now prints the parsed table names
+  (`s.tables`) instead of a table count, so a missing-MADT failure shows which tables were actually
+  parsed (20bcd7d, #100).
+
 ### Changed
 - Kernel doc-comment cleanup, no behaviour change: `force_stack_overflow`'s doc comment (which had
   been misattached to `force_oom`) now sits on the right function; the module doc no longer opens
