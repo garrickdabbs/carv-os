@@ -6,6 +6,15 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Fixed
+- ACPI MADT existence assertion in `kernel/src/test.rs` now prints the parsed table names
+  (`s.tables`) instead of a table count, so a missing-MADT failure shows which tables were actually
+  parsed (20bcd7d, #100).
+
+### Changed
+- `release.yml` retries `cosign sign-blob` up to four times with backoff on transient Sigstore network errors
+  (the `v0.1.1-rc.2` publish job needed a manual re-run) (#76).
+
 ### Added
 - `nightly.yml`: a `report-status` job (`issues: write` only, `needs: [nightly, publish]`,
   `if: always()`) creates or updates a single pinned "Nightly is failing" issue with a link to the

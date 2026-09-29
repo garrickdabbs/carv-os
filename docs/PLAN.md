@@ -8,8 +8,9 @@
 **CARV** stands for **Capability Authority & Resource Versioning**: every action needs an explicit
 capability (*authority*), every resource is budgeted and every change is kept (*resource versioning*).
 
-> **Status (2026-09-28):** Phases 0 and 1 complete (`v0.1.1` released, reproducible across machines);
-> Phase 2 queued in board Iteration 2 pending the maintainer's go. Details in §11.
+> **Status (2026-09-29):** Phases 0 and 1 complete (`v0.1.1` released, reproducible across machines);
+> Phase 2 queued in board Iteration 2 pending the maintainer's go. Epics now exist for every phase
+> (#46, #55, #66, #78, #83, #90, #104, #110, #118). Details in §11.
 
 ### Naming conventions
 | Form | Use it for |
@@ -221,12 +222,16 @@ with `E_BUDGET` when the budget is used up.
 ```
 carv-os/
 ├── .github/
-│   ├── workflows/
-│   │   ├── ci.yml             # per-PR: lint, host tests, kernel + integration tests in QEMU, all-green gate
-│   │   ├── nightly.yml        # fuzz, Miri, audit, geiger, stress loops, toolchain drift, nightly pre-release
-│   │   ├── release.yml        # tag v* → reproducible ISO, tests, SBOM, Sigstore signature, attestation, Release
-│   │   ├── codeql.yml         # code scanning (public repo)
-│   │   └── scorecard.yml      # OpenSSF Scorecard (public repo)
+│   ├── workflows/              # one workflow per README badge (§7.2)
+│   │   ├── build.yml          # `build`: fmt, clippy (host + kernel), debug/release build, host tests, ISO artifact
+│   │   ├── ci.yml              # `boot-smoke`: cargo xtask test — host + in-kernel tests, UEFI/BIOS/panic smoke in QEMU
+│   │   ├── security.yml       # `security`: cargo deny, cargo audit, unsafe inventory, SHA-pinned-action check
+│   │   ├── docs.yml            # `docs`: docs-gate, rustdoc -D warnings, lychee markdown link check
+│   │   ├── perf.yml            # `perf`: cargo xtask perf size/boot-time budgets
+│   │   ├── codeql.yml         # code scanning (public repo), advisory only
+│   │   ├── scorecard.yml      # OpenSSF Scorecard (public repo), advisory only
+│   │   ├── nightly.yml        # stress loops, perf budgets, cargo audit, toolchain drift, nightly pre-release (fuzz/Miri/geiger planned but not yet wired in, §7.3/§9.6; "Nightly is failing" issue automation not yet implemented, §7.4)
+│   │   └── release.yml        # tag v* → reproducible ISO, tests, SBOM, Sigstore signature, attestation, Release
 │   ├── dependabot.yml         # cargo + github-actions, weekly, grouped
 │   ├── release.yml            # release-notes categories by task prefix
 │   ├── CODEOWNERS
@@ -357,9 +362,12 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
   columns *Backlog → Ready → In progress → In review → Done*. The §11 status table summarizes the board.
 - **Board mechanics (set up 2026-09-27):** the *CarvOS Prototype* user project (#3) with Status
   *Backlog / Ready / In progress / In review / Done*, 14-day iterations (Iteration 1 from 2026-09-26;
-  Phase N's tasks sit in Iteration N) and Priority/Size fields. Phase epics #46 (P1), #55 (P2) and
-  #66 (P3) hold one sub-issue per task ID with the AC copied from §8; the epic's sub-issue counter
-  is the phase progress. Built-in project workflows do the automatic moves: auto-add on creation,
+  Phase N's tasks sit in Iteration N, when that iteration exists — only Iterations 1–5 are
+  configured as of this PR (through 2026-12-05), so Phase 6's epic (#90) is already Backlog with
+  no iteration, and Phase 7–9 epics/tasks are Backlog with no iteration too, until Iterations 6–9
+  are added). Phase epics #46 (P1), #55 (P2), #66 (P3), #78 (P4), #83 (P5), #90 (P6), #104 (P7), #110
+  (P8) and #118 (P9) hold one sub-issue per task ID with the AC copied from §8; the epic's sub-issue
+  counter is the phase progress. Built-in project workflows do the automatic moves: auto-add on creation,
   item closed → Done, PR merged → Done, PR linked to issue, auto-close issue when set to Done,
   auto-add sub-issues. Agents set *In progress* and *In review* with `gh` and link PRs with
   `Closes #<task>` + `task: <ID>` in the body. No repository workflow touches the board: `GITHUB_TOKEN`
@@ -429,7 +437,7 @@ Details:
 | Dependency updates | **Dependabot** for `cargo` and `github-actions`, weekly, grouped minor/patch | `.github/dependabot.yml` |
 | Vulnerable / unlicensed / duplicate deps | **`cargo deny`** (`advisories`, `licenses` allow-list: MIT, Apache-2.0, BSD-2/3, ISC, Zlib, Unicode-3.0; `bans`: duplicate versions are an *error*; `sources` = crates.io only) | `deny.toml`, `security` job |
 | Fresh advisories without a code change | **`cargo audit`** on the nightly schedule (advisory DB moves even when code doesn't) | `nightly.yml` |
-| Unsafe-code discipline (mechanizes the CLAUDE.md rule) — *live* | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(unsafe_op_in_unsafe_fn)]` + `#![deny(missing_docs)]` in every crate root; `cargo geiger` unsafe-count report posted to the PR summary; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `carv-rt` | crate roots, `lint` job |
+| Unsafe-code discipline (mechanizes the CLAUDE.md rule) — *partially live* | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(missing_docs)]` in every crate root — *live*; `#![deny(unsafe_op_in_unsafe_fn)]` in the kernel crate root (`kernel/src/main.rs`), the only crate with `unsafe fn`s today — *live*; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `carv-rt` — *live*; `cargo geiger` unsafe-count report posted to the PR summary — **deferred to P9.6** (not in any workflow yet, consistent with §11 "deferred to later tasks") | crate roots, `build.yml` (clippy) and `security.yml` (unsafe inventory) |
 | Undefined behaviour in host-testable code | **Miri**: `cargo miri test` on the pure crates (`carv-caps`, `carv-value`, `carv-vstore-core`, `carv-budget`) | `nightly.yml` |
 | Fuzzing (P9.3) | `cargo fuzz` for 20 min per target nightly; corpus cached as an artifact; a crash uploads the input and opens/updates an issue labeled `kind:security` | `nightly.yml` |
 | Actions supply chain | Every action pinned to a **full commit SHA** (Dependabot bumps them); top-level `permissions: contents: read`, elevated per job only (`id-token: write`, `attestations: write`, `contents: write` for release); no long-lived secrets anywhere, signing is keyless via OIDC | all workflows |
@@ -486,8 +494,9 @@ protection, Scorecard and rulesets are all available at no cost.
   *Unreleased*; the release PR moves it under the version heading. Release notes are generated
   from merged PR titles grouped by task prefix (`gh release create --generate-notes` +
   `.github/release.yml` categories).
-- **Release flow** (triggered by pushing a `v*` tag, which only the maintainer can do because tag
-  creation is covered by the ruleset):
+- **Release flow** (triggered by pushing a `v*` tag; in practice only the maintainer does this today
+  because no `v*` tag ruleset exists yet — see §11 "Open maintainer decisions" — and agents never
+  create rulesets):
   1. `release-check`, then a **reproducible** `cargo xtask image --release` — `xtask` sets
      `SOURCE_DATE_EPOCH` to the commit time for xorriso, and the workflow builds twice — the second
      time from another directory with a fresh `CARGO_HOME` — and requires identical SHA-256s
@@ -528,13 +537,13 @@ phase's interfaces are frozen.
 ### Phase 0 — Scaffolding & Boot (target: "hello" over serial)
 | ID | Task | AC |
 |---|---|---|
-| P0.1 | Workspace, `rust-toolchain.toml`, `.cargo/config.toml`, target `x86_64-unknown-none`, kernel linker script (higher half) | `cargo xtask build` succeeds |
-| P0.2 | `xtask`: build, fetch/pin Limine, make ISO, run QEMU, detect KVM | `cargo xtask run` boots to the Limine menu, then the kernel |
-| P0.3 | Serial driver (16550) + `kprintln!` macro + panic handler printing to serial | Serial shows `CarvOS chisel v0.0.1 booting` |
+| P0.1 | Workspace, `rust-toolchain.toml`, `.cargo/config.toml`, target `x86_64-unknown-none`, kernel linker script (higher half) | `cargo xtask build` succeeds — **done 2026-09-27** |
+| P0.2 | `xtask`: build, fetch/pin Limine, make ISO, run QEMU, detect KVM | `cargo xtask run` boots to the Limine menu, then the kernel — **done 2026-09-27** |
+| P0.3 | Serial driver (16550) + `kprintln!` macro + panic handler printing to serial | Serial shows `CarvOS chisel v0.0.1 booting` — **done 2026-09-27** |
 | P0.4 | `isa-debug-exit` + in-kernel test framework | `cargo xtask test` runs a trivial test, QEMU exits with the pass code — **done 2026-09-27**: 5 `#[test_case]`s, exit 33/35 mapped by `xtask`, `test` runs host + kernel + smoke layers |
-| P0.5 | `ci.yml` per §7.2: lint (fmt, clippy both targets, doc, `cargo deny`), host tests (`cargo test`; nextest + JUnit deferred to P9.6), kernel tests and integration tests in QEMU with KVM enabled, `all-green` gate; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows a single required `all-green` check; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR |
+| P0.5 | Lint (fmt, clippy both targets, doc, `cargo deny`), host tests (`cargo test`; nextest + JUnit deferred to P9.6), kernel tests and integration tests in QEMU with KVM enabled, five required checks — now delivered as `build.yml`, `ci.yml`, `security.yml`, `docs.yml` and `perf.yml` per §7.2 rather than one `ci.yml`; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows the five required checks (`build`, `boot-smoke`, `security`, `docs`, `perf`) green; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR — **done 2026-09-27**. History: an initial single required `all-green` check existed briefly before the split into one workflow per README badge (§7.2) |
 | P0.6 | `README.md` (build, run, verify-a-release sections), `docs/adr/0001-microkernel-rust-x86_64.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE` | Files exist; README badges for CI and Scorecard render — **done 2026-09-27** |
-| P0.7 | Repo governance per §7.1: `main` ruleset (PR + `all-green` required, linear history, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board, fine-grained PAT for agents | Direct push to `main` is rejected; a PR without green CI can't merge; agent token can't merge |
+| P0.7 | Repo governance per §7.1: `main` ruleset (PR + the five required checks, merge commits only, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board, fine-grained PAT for agents | Direct push to `main` is rejected; a PR without all five checks green can't merge; agent token can't merge — **partial, 2026-09-27**: the live `main` ruleset (`gh api repos/garrickdabbs/carv-os/rulesets`) requires `build`, `boot-smoke`, `security`, `docs` and `perf`, allows merge commits only (not linear history/squash), requires review-thread resolution and has no bypass, matching §7.1; `CODEOWNERS`, templates, labels and the Project board are in place. **Not done:** the fine-grained agent PAT — agents still run under the maintainer's own admin `gh` login, so the "agent token can't merge" AC is unverified. Tracked in §11 "Open maintainer decisions" |
 | P0.8 | `release.yml` per §7.5 + `cargo xtask release-check`: reproducible ISO, tests against artifacts, boot-smoke, SHA256SUMS, SBOM, Sigstore signature, build provenance attestation, GitHub Release with generated notes. `nightly.yml` (daily tests, stress, perf, audit, toolchain drift, rolling `nightly` pre-release) | Tag `v0.1.0` produces a release whose ISO boots to the banner and passes `gh attestation verify`; two runs produce identical ISO hashes — **pipeline landed 2026-09-27; validated with `v0.1.0-rc.1`, then `v0.1.0`** |
 
 ### Phase 1 — Kernel Core
@@ -544,7 +553,7 @@ phase's interfaces are frozen.
 | P1.2 | Physical frame allocator from the Limine memory map (bitmap or buddy) | Kernel test: allocate/free 10k frames, no duplicates, count restored — **done 2026-09-27** (`crates/carv-frames` bitmap core, host-tested; kernel wrapper carves the bitmap from usable RAM via the HHDM) |
 | P1.3 | Paging: kernel mapper using the HHDM offset, map/unmap/translate | Test maps a fresh page, writes, reads back, unmaps → page fault handler catches access — **done 2026-09-27** (`x86_64::OffsetPageTable` over Limine's CR3 tables; dynamic region at `0xffff9000_00000000`; `pfault` smoke scenario; the deferred recursion-overflow → `#DF` test now runs via a guard-paged stack, `sovflw`) |
 | P1.4 | Kernel heap (`linked_list_allocator` or custom slab) + `alloc` | `Vec`/`Box`/`BTreeMap` work in kernel tests — **done 2026-09-27** (`kernel::mm::heap`: 1 MiB `linked_list_allocator` heap in the dynamic region behind the kernel `SpinLock`, bytes-in-use counter for future budgets) |
-| P1.5 | Local APIC + timer (calibrated against HPET/PIT), disable legacy PIC | Timer ticks at 1 kHz; test counts ticks over a busy wait — **done 2026-09-27** (xAPIC via the HHDM, PIT-calibrated, vector 32; PICs remapped + masked; HPET calibration waits for ACPI in P1.6) |
+| P1.5 | Local APIC + timer (calibrated against HPET/PIT), disable legacy PIC | Timer ticks at 1 kHz; test counts ticks over a busy wait — **done 2026-09-27** (xAPIC via the HHDM, PIT-calibrated, vector 32; PICs remapped + masked; HPET calibration deferred to issue #126, filed now that P1.6 has landed and parses the HPET base address) |
 | P1.6 | ACPI table parsing (`acpi` crate) for MADT/HPET/MCFG | Boot log lists APIC ID(s) and HPET address — **done 2026-09-27** (`platform::acpi` summary via the HHDM; ECAM regions kept for P1.7) |
 | P1.7 | PCI(e) enumeration via ECAM | Boot log lists virtio-blk and virtio-net devices — **done 2026-09-27** (`platform::pci` over the MCFG regions from P1.6; headers read through one scratch mapping, drivers map their own device pages later) |
 
@@ -696,25 +705,34 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | **done** | P1.1–P1.7 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz, ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
 | P2 Caps/IPC/Budgets | queued | Epic #55, Iteration 2 (from 2026-10-10); starts on the maintainer's go. First picks: the pure crates P2.2 `carv-caps` (#57) and P2.3 `carv-budget` (#58) |
-| P3 Runtime & svcmgr | not started | |
-| P4 Drivers | not started | |
-| P5 Versioned Store | not started | |
-| P6 Shell & Coreutils | not started | |
-| P7 Users & Auth | not started | |
-| P8 Networking | not started | |
-| P9 Hardening | partial | Landed early: CodeQL + Scorecard workflows (P9.7, Phase 0), reproducible builds across machines (P9.6 part, #42, 2026-09-27). Rest not started |
+| P3 Runtime & svcmgr | not started | Epic #66 |
+| P4 Drivers | not started | Epic #78 |
+| P5 Versioned Store | not started | Epic #83 |
+| P6 Shell & Coreutils | not started | Epic #90; no iteration assigned yet — only Iterations 1–5 exist |
+| P7 Users & Auth | not started | Epic #104 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist |
+| P8 Networking | not started | Epic #110 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist |
+| P9 Hardening | partial | Epic #118 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist. Landed early: CodeQL + Scorecard workflows (P9.7, Phase 0), reproducible builds across machines (P9.6 part, #42, 2026-09-27). Rest not started |
 
 (Better: mirror these as GitHub Issues with a Project board; one issue per task ID, labeled by phase.)
 
-**Open maintainer decisions (2026-09-27, from #35):**
+**Open maintainer decisions (2026-09-29, from #35 plus this review):**
 - Branch-protection approval tiers (required approver / CODEOWNERS review / last-push approval).
   With one maintainer this blocks the autonomous loop; options: leave as is, add a second reviewer
   account and require one approval, or enable with admin bypass.
 - OpenSSF Best Practices badge: registration at bestpractices.dev needs the maintainer's login; the
   questionnaire can then be answered from README/SECURITY/CONTRIBUTING.
+- **Fine-grained agent PAT (P0.7):** §7.1 calls for agents to run under a fine-grained PAT scoped to
+  `contents: write` + `pull_requests: write` with no admin rights; today agents use the maintainer's
+  own `gh` login, which has admin rights. Creating and distributing that PAT is a maintainer action.
+- **`v*` tag ruleset:** no ruleset protects tag creation/deletion today (only the `main` branch
+  ruleset exists); §7.5's release flow and §12's risk mitigation assumed one. Agents never create or
+  edit rulesets, so adding a tag ruleset is a maintainer action.
+- **Iterations 6–9:** the board's Iteration field only has Iterations 1–5 configured (through
+  2026-12-05). Phase 7/8/9 epics (#104, #110, #118) and their sub-issues are in Backlog with no
+  iteration until the maintainer adds Iterations 7–9.
 
 **Deferred to later tasks:** nextest + JUnit output (P9.6), `cargo vet` (P9.7), fuzzing once parsers
-exist (P9.3), Miri/geiger/coverage/50-boot stress in nightly (P9.6).
+exist (P9.3), Miri/geiger/coverage/50-boot stress in nightly (P9.6), `cargo geiger` in CI (P9.6).
 
 ---
 
@@ -730,7 +748,7 @@ exist (P9.3), Miri/geiger/coverage/50-boot stress in nightly (P9.6).
 | Agents claim "done" without proof | AC are machine-checkable; CI must be green; PR template requires pasted test output |
 | Nightly Rust breakage | Pin an exact nightly date in `rust-toolchain.toml`; bump deliberately |
 | Compromised dependency or GitHub Action | `cargo deny` sources = crates.io only, `cargo vet` for kernel deps, actions pinned to commit SHAs, Dependabot reviews every bump, least-privilege `permissions` |
-| Agent merges or tags without CI | Ruleset with no bypass on `main` and `v*` tags; agents use a fine-grained PAT that cannot merge or tag |
+| Agent merges or tags without CI | `main` ruleset with no bypass; agents use `gh` under the maintainer's login (a scoped fine-grained PAT is still a pending maintainer action, §11) and are instructed never to tag or edit rulesets. **No `v*` tag ruleset exists yet** — tag protection is a pending maintainer action (§11); until then, tagging is a purely human/process control, not a mechanical one |
 | Tampered or mistaken release download | Reproducible builds, `SHA256SUMS`, Sigstore signature, SLSA provenance; releases are never re-uploaded, only superseded |
 | CI slow or flaky under TCG emulation | KVM enabled on GitHub Linux runners; TCG fallback scales timeouts; no retries, so flakes surface and get fixed |
 | Review comments land after the merge (auto-merge races Copilot and the monitoring loop) | No auto-merge on fresh PRs; ≥ 15-minute review window after every push; every thread answered and resolved before merging; periodic audit that all merged PRs have zero unresolved threads (§7.1) |
