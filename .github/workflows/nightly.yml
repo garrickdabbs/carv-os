@@ -137,19 +137,29 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${{ steps.find.outputs.number }}" ]; then
-            gh issue comment "${{ steps.find.outputs.number }}" --repo "$REPO" \
-              --body "Still failing: $RUN_URL"
+            number="${{ steps.find.outputs.number }}"
+            gh issue comment "$number" --repo "$REPO" --body "Still failing: $RUN_URL"
           else
             number=$(gh issue create --repo "$REPO" --title "$TITLE" \
               --label "kind:bug,area:infra" \
               --body "Nightly failed: $RUN_URL"$'\n\n'"This issue is kept pinned and updated by \`nightly.yml\`'s \`report-status\` job; it is closed automatically the next time nightly is green." \
               --assignee garrickdabbs | awk -F/ '{print $NF}')
+          fi
+          # Retry the pin every run, not just on creation: a transient failure on a prior run
+          # (or an unpin left over from a previous close) must not leave this issue permanently
+          # unpinned while nightly keeps failing.
+          pinned=$(gh api graphql -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){isPinned}}}' \
+            -f owner="${REPO%/*}" -f name="${REPO#*/}" -F number="$number" --jq .data.repository.issue.isPinned)
+          if [ "$pinned" != "true" ]; then
             gh issue pin "$number" --repo "$REPO" || echo "::warning::could not pin issue $number (insufficient token scope); it still tracks nightly failures"
           fi
       - name: on success, close the pinned issue if it exists
         if: needs.nightly.result == 'success' && needs.publish.result == 'success' && steps.find.outputs.number != ''
         run: |
           set -euo pipefail
-          gh issue comment "${{ steps.find.outputs.number }}" --repo "$REPO" \
-            --body "Green again: $RUN_URL"
-          gh issue close "${{ steps.find.outputs.number }}" --repo "$REPO" --reason completed
+          number="${{ steps.find.outputs.number }}"
+          gh issue comment "$number" --repo "$REPO" --body "Green again: $RUN_URL"
+          # Unpin before closing: a closed-but-still-pinned issue permanently occupies one of the
+          # repository's three pin slots, eventually blocking a future failure issue from pinning.
+          gh issue unpin "$number" --repo "$REPO" || echo "::warning::could not unpin issue $number (insufficient token scope)"
+          gh issue close "$number" --repo "$REPO" --reason completed
