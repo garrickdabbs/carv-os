@@ -107,3 +107,49 @@ jobs:
           gh release create nightly nightly-dist/* --repo "$REPO" --target "$GITHUB_SHA" --prerelease --latest=false \
             --title "nightly (main @ ${GITHUB_SHA::7})" \
             --notes "Rolling, unsigned build of \`main\` at ${GITHUB_SHA} on $(date -u +%Y-%m-%d). Not a release: for tagged, signed, attested images see the versioned releases."
+
+  # PLAN.md §7.4: on failure, create or update one pinned issue with a link to the run; close it
+  # with a comment the next time nightly is green. Isolated in its own job with only `issues:
+  # write` (no `contents`) so a compromised test dependency can't use this job to touch the repo.
+  report-status:
+    name: report nightly status
+    needs: [nightly, publish]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      TITLE: "Nightly is failing"
+    steps:
+      - name: find the pinned "Nightly is failing" issue, if any
+        id: find
+        run: |
+          set -euo pipefail
+          number=$(gh issue list --repo "$REPO" --state open --search "\"$TITLE\" in:title" \
+            --json number,title --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+      - name: on failure, create or update the pinned issue
+        if: needs.nightly.result == 'failure' || needs.publish.result == 'failure'
+        run: |
+          set -euo pipefail
+          if [ -n "${{ steps.find.outputs.number }}" ]; then
+            gh issue comment "${{ steps.find.outputs.number }}" --repo "$REPO" \
+              --body "Still failing: $RUN_URL"
+          else
+            number=$(gh issue create --repo "$REPO" --title "$TITLE" \
+              --label "kind:bug,area:infra" \
+              --body "Nightly failed: $RUN_URL"$'\n\n'"This issue is kept pinned and updated by \`nightly.yml\`'s \`report-status\` job; it is closed automatically the next time nightly is green." \
+              --assignee garrickdabbs | awk -F/ '{print $NF}')
+            gh issue pin "$number" --repo "$REPO" || echo "::warning::could not pin issue $number (insufficient token scope); it still tracks nightly failures"
+          fi
+      - name: on success, close the pinned issue if it exists
+        if: needs.nightly.result == 'success' && needs.publish.result == 'success' && steps.find.outputs.number != ''
+        run: |
+          set -euo pipefail
+          gh issue comment "${{ steps.find.outputs.number }}" --repo "$REPO" \
+            --body "Green again: $RUN_URL"
+          gh issue close "${{ steps.find.outputs.number }}" --repo "$REPO" --reason completed

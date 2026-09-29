@@ -6,6 +6,12 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Added
+- `nightly.yml`: a `report-status` job (`issues: write` only, `needs: [nightly, publish]`,
+  `if: always()`) creates or updates a single pinned "Nightly is failing" issue with a link to the
+  run when nightly fails, and closes it with a comment the next time nightly is green (PLAN.md
+  §7.4).
+
 ### Changed
 - `release.yml` retries `cosign sign-blob` up to four times with backoff on transient Sigstore network errors
   (the `v0.1.1-rc.2` publish job needed a manual re-run) (#76).

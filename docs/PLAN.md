@@ -462,7 +462,9 @@ protection, Scorecard and rulesets are all available at no cost.
   - a stress boot: 10 consecutive UEFI+BIOS rounds today (50 boots to a shell prompt from Phase 6);
     the loop checks `cargo xtask smoke`'s exit code directly, never through `grep`
   - On failure the workflow creates or updates a single pinned issue **"Nightly is failing"**
-    with links to the run, and closes it when green again.
+    with links to the run, and closes it when green again. Implemented as a separate
+    `report-status` job (`needs: [nightly, publish]`, `if: always()`) that holds only
+    `issues: write` — never `contents` — so it can run even when the test jobs fail.
 - **Test reporting (deferred):** host tests run with plain `cargo test` today; `cargo-nextest` with
   JUnit output for host, kernel and integration tests, rendered into the job summary and kept as
   artifacts for 30 days, is planned for P9.6.
