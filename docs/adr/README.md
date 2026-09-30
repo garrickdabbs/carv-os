@@ -11,3 +11,4 @@ Format (Michael Nygard's): **Context** — what forces the decision; **Decision*
 | ADR | Title | Status |
 |---|---|---|
 | [0001](0001-microkernel-rust-x86_64.md) | Capability microkernel in Rust for x86_64, booted by Limine, tested in QEMU | Accepted |
+| [0002](0002-abi-v1-and-root-elf.md) | Version-1 syscall/IPC ABI and root-task ELF contract | Accepted |

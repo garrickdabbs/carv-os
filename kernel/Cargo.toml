@@ -16,6 +16,7 @@ bench = false
 
 [dependencies]
 acpi = { version = "6", default-features = false, features = ["alloc", "aml"] }
+carv-caps = { path = "../crates/carv-caps" }
 carv-frames = { path = "../crates/carv-frames" }
 limine = "0.6.5"
 # Kernel heap core (P1.4); default features off: the kernel wraps it in its own SpinLock.

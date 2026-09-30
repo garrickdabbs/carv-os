@@ -109,6 +109,28 @@ fn gdt_selectors_are_live() {
     let top = crate::arch::x86_64::gdt::double_fault_stack_top().as_u64();
     assert_ne!(top, 0);
     assert_eq!(top % 16, 0);
+    assert_eq!(sel.user_code.0 & 3, 3);
+    assert_eq!(sel.user_data.0 & 3, 3);
+}
+
+#[test_case]
+fn user_context_starts_with_safe_flags() {
+    let context = crate::arch::x86_64::syscall::UserContext::new(0x4000, 0x8000);
+    assert_eq!(context.rip, 0x4000);
+    assert_eq!(context.rsp, 0x8000);
+    assert_ne!(context.rflags & (1 << 9), 0);
+    assert_eq!(context.rax, 0);
+}
+
+#[test_case]
+fn scheduler_round_robin_skips_throttled_threads() {
+    let mut scheduler = crate::scheduler::Scheduler::new();
+    scheduler.add(crate::scheduler::Thread::new(1, 2_000_000, 10_000_000, 0));
+    scheduler.add(crate::scheduler::Thread::new(2, 8_000_000, 10_000_000, 0));
+    assert_eq!(scheduler.tick(1_000_000), Some(1));
+    assert_eq!(scheduler.tick(1_000_000), Some(2));
+    assert_eq!(scheduler.tick(1_000_000), Some(1));
+    assert_eq!(scheduler.tick(1_000_000), Some(2));
 }
 
 /// Scratch space for the frame test; 10k indexes is too big for the 64 KiB boot stack.

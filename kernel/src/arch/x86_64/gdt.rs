@@ -32,6 +32,8 @@ static SELECTORS: StaticCell<Selectors> = StaticCell::new(Selectors {
     code: SegmentSelector(0),
     data: SegmentSelector(0),
     tss: SegmentSelector(0),
+    user_code: SegmentSelector(0),
+    user_data: SegmentSelector(0),
 });
 
 /// Segment selectors handed out by [`init`].
@@ -43,6 +45,11 @@ pub struct Selectors {
     pub data: SegmentSelector,
     /// The TSS descriptor.
     pub tss: SegmentSelector,
+    /// Ring-3 code segment.
+    pub user_code: SegmentSelector,
+    /// Ring-3 data segment.
+    #[allow(dead_code)]
+    pub user_data: SegmentSelector,
 }
 
 /// Builds and loads the GDT and TSS, then reloads the segment registers. Call once, early in
@@ -61,10 +68,14 @@ pub fn init() {
         let code = gdt.append(Descriptor::kernel_code_segment());
         let data = gdt.append(Descriptor::kernel_data_segment());
         let tss_sel = gdt.append(Descriptor::tss_segment(TSS.get()));
+        let user_code = gdt.append(Descriptor::user_code_segment());
+        let user_data = gdt.append(Descriptor::user_data_segment());
         *SELECTORS.get_mut() = Selectors {
             code,
             data,
             tss: tss_sel,
+            user_code,
+            user_data,
         };
 
         GDT.get().load();

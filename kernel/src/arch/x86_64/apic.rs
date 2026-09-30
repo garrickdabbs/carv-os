@@ -151,6 +151,7 @@ fn eoi() {
 /// Vector 32: count the tick and acknowledge it.
 pub extern "x86-interrupt" fn timer_interrupt(_frame: InterruptStackFrame) {
     TICKS.fetch_add(1, Ordering::Relaxed);
+    crate::scheduler::timer_tick();
     eoi();
 }
 

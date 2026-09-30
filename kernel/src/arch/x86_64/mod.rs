@@ -7,6 +7,7 @@ pub mod idt;
 pub mod pic;
 pub mod pit;
 pub mod port;
+pub mod syscall;
 
 /// Returns whether interrupts are currently enabled (RFLAGS.IF).
 pub fn interrupts_enabled() -> bool {
