@@ -1,7 +1,8 @@
-# CarvOS ABI (P2.1)
+# CarvOS ABI — version 1
 
-This document is the source of truth for the shared types in `carv-abi`. It describes the
-pre-freeze ABI; P2.10 will freeze version 1 and record the decision in an ADR.
+**Status: frozen by ADR-0002 (2026-09-30).** This document is the source of truth for the shared
+types in `carv-abi`. P2.1 provides the corresponding representation-stable Rust definitions;
+future changes must update this document and the crate together.
 
 ## Syscalls
 
@@ -56,3 +57,17 @@ Rights are a six-bit `u8` mask:
 
 Undefined bits are rejected by `Rights::from_bits`; rights can only be attenuated by later
 capability operations.
+
+## Root task ELF contract
+
+Limine supplies `init` as a module. The kernel accepts ELF64, little-endian, current-version,
+x86-64 `ET_EXEC` or already-relocated `ET_DYN` images. Each `PT_LOAD` must fit in the module,
+have `p_filesz <= p_memsz`, use page-compatible offset/address alignment, and not be both writable
+and executable. `p_memsz - p_filesz` is zero-filled. The entry must lie in an executable segment.
+The initial CSpace contains the system's untyped authority; subsequent authority is transferred
+only through capabilities.
+
+## Compatibility
+
+This is v1. Any change to syscall numbers, error values, message layout, rights bits, or the root
+task contract requires a new ADR and a version bump.
