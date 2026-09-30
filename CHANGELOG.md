@@ -7,6 +7,7 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Added
+- Phase 2 coordination audit: P2.1–P2.4 and P2.10 meet their acceptance criteria; P2.5–P2.9 remain explicitly partial pending ring-3, scheduler, hardware IRQ, and root-task integration.
 - P2.9/P2.10: allocation-free `no_std` ELF64 validation and segment-mapping abstractions for a
   Limine root-task module, plus ADR-0002 and the frozen ABI v1 contract. Ring-3 address-space
   integration remains P2.5 work.

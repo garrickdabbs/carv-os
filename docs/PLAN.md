@@ -8,8 +8,9 @@
 **CARV** stands for **Capability Authority & Resource Versioning**: every action needs an explicit
 capability (*authority*), every resource is budgeted and every change is kept (*resource versioning*).
 
-> **Status (2026-09-29):** Phases 0 and 1 complete (`v0.1.1` released, reproducible across machines);
-> Phase 2 queued in board Iteration 2 pending the maintainer's go. Epics now exist for every phase
+> **Status (2026-09-30):** Phases 0 and 1 complete (`v0.1.1` released, reproducible across machines);
+> Phase 2 foundations are implemented and under review, with ring-3 integration still outstanding.
+> Epics now exist for every phase
 > (#46, #55, #66, #78, #83, #90, #104, #110, #118). Details in §11.
 
 ### Naming conventions
@@ -704,7 +705,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | **done** | P1.1–P1.7 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz, ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
-| P2 Caps/IPC/Budgets | review | Epic #55, Iteration 2 (from 2026-10-10); P2.2 `carv-caps` (#57) implemented 2026-09-29; P2.3 `carv-budget` (#58) in review; P2.9 loader foundations and P2.10 ABI v1/ADR-0002 implemented 2026-09-30; P2.5 ring-3 integration remains required |
+| P2 Caps/IPC/Budgets | review | Epic #55, Iteration 2 (from 2026-10-10). Complete: P2.1–P2.4 and P2.10 (ABI v1/ADR-0002). Partial: P2.5 (ring-3 dispatcher, return path, context switching, and user-thread boot), P2.6 (preemption integration and 30/70 measurement), P2.7 (user-thread blocking/ping-pong), P2.8 (hardware IDT/I/O APIC delivery), and P2.9 (ELF validation only; init does not yet run in ring 3). Merge order is P2.5 → P2.6 → P2.7/P2.8 → P2.9; P2.10 remains the ABI gate for Phase 3. |
 | P3 Runtime & svcmgr | not started | Epic #66 |
 | P4 Drivers | not started | Epic #78 |
 | P5 Versioned Store | not started | Epic #83 |
