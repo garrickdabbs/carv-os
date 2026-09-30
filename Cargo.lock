@@ -94,6 +94,7 @@ name = "chisel"
 version = "0.1.1"
 dependencies = [
  "acpi",
+ "carv-caps",
  "carv-frames",
  "limine",
  "linked_list_allocator",

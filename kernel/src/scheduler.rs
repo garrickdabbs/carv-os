@@ -20,6 +20,7 @@ pub struct Thread {
 
 impl Thread {
     /// Creates a runnable thread with a full budget.
+    #[allow(dead_code)]
     pub fn new(id: u64, budget_ns: u64, period_ns: u64, now_ns: u64) -> Self {
         assert!(period_ns != 0 && budget_ns <= period_ns);
         Self {
@@ -70,6 +71,7 @@ impl Scheduler {
     }
 
     /// Adds a thread and returns its position.
+    #[allow(dead_code)]
     pub fn add(&mut self, thread: Thread) -> usize {
         self.threads.push(thread);
         self.threads.len() - 1
@@ -98,6 +100,7 @@ impl Scheduler {
     }
 
     /// Returns the currently selected thread identifier.
+    #[allow(dead_code)]
     pub fn current(&self) -> Option<u64> {
         self.current.map(|i| self.threads[i].id)
     }

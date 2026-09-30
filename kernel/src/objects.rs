@@ -137,6 +137,7 @@ impl Drop for FrameObject {
 enum Object {
     Thread,
     AddressSpace,
+    #[allow(dead_code)]
     Frame(FrameObject),
     Endpoint,
     Notification,

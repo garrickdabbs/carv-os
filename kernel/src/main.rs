@@ -40,13 +40,13 @@ use limine::request::{
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 
 mod arch;
-mod ipc;
 pub mod elf;
+pub mod ipc;
 mod mm;
 pub mod objects;
 mod platform;
-mod serial;
 mod scheduler;
+mod serial;
 mod sync;
 #[cfg(test)]
 mod test;

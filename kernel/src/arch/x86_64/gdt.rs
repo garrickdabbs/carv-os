@@ -48,6 +48,7 @@ pub struct Selectors {
     /// Ring-3 code segment.
     pub user_code: SegmentSelector,
     /// Ring-3 data segment.
+    #[allow(dead_code)]
     pub user_data: SegmentSelector,
 }
 

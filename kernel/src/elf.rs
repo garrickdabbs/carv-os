@@ -16,7 +16,6 @@ const EM_X86_64: u16 = 62;
 const PT_LOAD: u32 = 1;
 const PF_X: u32 = 1;
 const PF_W: u32 = 2;
-const PF_R: u32 = 4;
 const PAGE_SIZE: u64 = 4096;
 
 /// A Limine module viewed as a bounded byte slice.
@@ -127,8 +126,12 @@ pub fn validate<'a, 's>(
     if phentsize != 56 || phnum == 0 {
         return Err(Error::InvalidProgramHeaders);
     }
-    let table_len = phentsize.checked_mul(phnum).ok_or(Error::InvalidProgramHeaders)?;
-    let table_end = phoff.checked_add(table_len).ok_or(Error::InvalidProgramHeaders)?;
+    let table_len = phentsize
+        .checked_mul(phnum)
+        .ok_or(Error::InvalidProgramHeaders)?;
+    let table_end = phoff
+        .checked_add(table_len)
+        .ok_or(Error::InvalidProgramHeaders)?;
     if table_end > bytes.len() as u64 {
         return Err(Error::InvalidProgramHeaders);
     }
@@ -157,7 +160,9 @@ pub fn validate<'a, 's>(
         if flags & PF_W != 0 && flags & PF_X != 0 {
             return Err(Error::WritableExecutable);
         }
-        let file_end = file_offset.checked_add(file_size).ok_or(Error::SegmentOutOfBounds)?;
+        let file_end = file_offset
+            .checked_add(file_size)
+            .ok_or(Error::SegmentOutOfBounds)?;
         let virtual_end = virtual_address
             .checked_add(memory_size)
             .ok_or(Error::SegmentOutOfBounds)?;
@@ -180,10 +185,12 @@ pub fn validate<'a, 's>(
         };
         count += 1;
     }
-    if count == 0 || !output[..count]
-        .iter()
-        .any(|segment| segment.executable() && segment.virtual_address <= entry
-            && entry < segment.virtual_address + segment.memory_size)
+    if count == 0
+        || !output[..count].iter().any(|segment| {
+            segment.executable()
+                && segment.virtual_address <= entry
+                && entry < segment.virtual_address + segment.memory_size
+        })
     {
         return Err(Error::EntryNotMapped);
     }
@@ -197,9 +204,9 @@ pub fn validate<'a, 's>(
 /// Operations supplied by the address-space implementation to materialize ELF segments.
 pub trait SegmentMapper {
     /// Map zeroed, non-overlapping user pages covering `virtual_range` with ELF `flags`.
-    fn map_zeroed(&mut self, virtual_range: Range<u64>, flags: u32) -> Result<(), ()>;
+    fn map_zeroed(&mut self, virtual_range: Range<u64>, flags: u32) -> Result<(), Error>;
     /// Copy initialized bytes into a previously mapped user range.
-    fn copy(&mut self, virtual_address: u64, bytes: &[u8]) -> Result<(), ()>;
+    fn copy(&mut self, virtual_address: u64, bytes: &[u8]) -> Result<(), Error>;
 }
 
 impl<'a, 's> Image<'a, 's> {
@@ -216,7 +223,9 @@ impl<'a, 's> Image<'a, 's> {
                 .and_then(|v| v.checked_add(PAGE_SIZE - 1))
                 .map(|v| v & !(PAGE_SIZE - 1))
                 .ok_or(Error::SegmentOutOfBounds)?;
-            mapper.map_zeroed(start..end, segment.flags).map_err(|_| Error::MappingFailed)?;
+            mapper
+                .map_zeroed(start..end, segment.flags)
+                .map_err(|_| Error::MappingFailed)?;
             let begin = segment.file_offset as usize;
             let end_file = begin
                 .checked_add(segment.file_size as usize)

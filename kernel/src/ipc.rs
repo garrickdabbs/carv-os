@@ -9,7 +9,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use carv_caps::{Capability, CSpace, CSpaceError};
+use carv_caps::{CSpace, CSpaceError, Capability};
 
 use crate::sync::SpinLock;
 
@@ -62,13 +62,11 @@ impl Message {
 
     /// Installs all transferred capabilities into empty receiver slots.
     pub fn install_caps(&self, cspace: &mut CSpace, slots: &[usize]) -> Result<(), CSpaceError> {
-        let mut slot_index = 0;
-        for cap in self.caps.iter().flatten() {
+        for (slot_index, cap) in self.caps.iter().flatten().enumerate() {
             let Some(&slot) = slots.get(slot_index) else {
                 return Err(CSpaceError::SlotOutOfRange);
             };
             cspace.insert(slot, cap.object(), cap.rights(), cap.badge())?;
-            slot_index += 1;
         }
         Ok(())
     }
@@ -162,11 +160,7 @@ impl Endpoint {
     }
 
     /// Completes an optional reply and receives the next request (server fast path).
-    pub fn reply_recv(
-        &self,
-        reply: Option<ReplyToken>,
-        message: Message,
-    ) -> Option<Received> {
+    pub fn reply_recv(&self, reply: Option<ReplyToken>, message: Message) -> Option<Received> {
         if let Some(token) = reply {
             assert!(self.reply(token, message), "reply token was already used");
         }
@@ -176,6 +170,12 @@ impl Endpoint {
     /// Takes a completed reply, if the caller's token has been answered.
     pub fn take_reply(&self, token: ReplyToken) -> Option<Message> {
         self.state.lock().replies.remove(&token.0)
+    }
+}
+
+impl Default for Endpoint {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -196,19 +196,25 @@ impl Notification {
     pub fn signal(&self) {
         let _ = self
             .pending
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_add(1));
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_add(1));
     }
 
     /// Consumes one pending signal, or returns `false` when none is pending.
     pub fn wait(&self) -> bool {
         self.pending
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_sub(1))
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_sub(1))
             .is_ok()
     }
 
     /// Returns the number of pending signals.
     pub fn pending(&self) -> u64 {
         self.pending.load(Ordering::Acquire)
+    }
+}
+
+impl Default for Notification {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -258,6 +264,12 @@ impl IrqRouter {
     }
 }
 
+impl Default for IrqRouter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,8 +302,20 @@ mod tests {
     fn notification_and_irq_routing() {
         let notification = Arc::new(Notification::new());
         let router = IrqRouter::new();
-        assert!(router.bind(Irq { gsi: 1, badge: 0x55 }, notification.clone()));
-        assert!(!router.bind(Irq { gsi: 1, badge: 0x99 }, notification.clone()));
+        assert!(router.bind(
+            Irq {
+                gsi: 1,
+                badge: 0x55
+            },
+            notification.clone()
+        ));
+        assert!(!router.bind(
+            Irq {
+                gsi: 1,
+                badge: 0x99
+            },
+            notification.clone()
+        ));
         assert_eq!(router.dispatch(99), None);
         assert_eq!(router.dispatch(1), Some(0x55));
         assert!(notification.wait());

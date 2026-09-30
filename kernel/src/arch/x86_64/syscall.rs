@@ -16,6 +16,7 @@ const RFLAGS_DF: u64 = 1 << 10;
 /// Saved general-purpose and control state for a preempted thread.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
+#[allow(dead_code)]
 pub struct UserContext {
     /// Instruction pointer.
     pub rip: u64,
@@ -41,6 +42,7 @@ pub struct UserContext {
 
 impl UserContext {
     /// Creates a context suitable for entering ring 3 with interrupts enabled.
+    #[allow(dead_code)]
     pub const fn new(rip: u64, rsp: u64) -> Self {
         Self {
             rip,
@@ -67,7 +69,7 @@ pub fn init() {
     // during early boot while interrupts are disabled.
     unsafe {
         Msr::new(IA32_STAR).write(star);
-        Msr::new(IA32_LSTAR).write(syscall_entry as usize as u64);
+        Msr::new(IA32_LSTAR).write(syscall_entry as *const () as usize as u64);
         Msr::new(IA32_FMASK).write(RFLAGS_IF | RFLAGS_DF);
     }
     enable_smap_smep();
