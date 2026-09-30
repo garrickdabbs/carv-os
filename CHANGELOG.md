@@ -22,7 +22,7 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   badge minting, derivation tracking, descendant revocation, and proptest coverage.
 
 ### Fixed
-- P2.5: correct the scheduler kernel test to account for the initial dispatch not charging a thread;
+- P2.6: correct the scheduler kernel test to account for the initial dispatch not charging a thread;
   verify round-robin skips it only after its budget is exhausted.
 - P1.6: migrate ACPI table parsing to `acpi` 6.1.1, including the expanded `Handler` contract,
   revised table iteration and platform/MCFG APIs.
