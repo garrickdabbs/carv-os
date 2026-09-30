@@ -564,10 +564,10 @@ phase's interfaces are frozen.
 | P2.2 | `carv-caps` (pure): CSpace, capability slots, copy/mint/revoke, derivation tree | Proptest: after revoke(c), no descendant of c is reachable; rights never grow |
 | P2.3 | `carv-budget` (pure): CPU budget/period refill, memory limit, hierarchical carve-out, token bucket | Host tests: child limits never exceed parent; refill math correct over simulated time |
 | P2.4 | Kernel objects: Thread, AddressSpace, Frame, Endpoint, Notification, Budget, Reply | Kernel tests create and destroy each object via `invoke`; memory charged/credited to the budget |
-| P2.5 | Context switch, ring-3 entry (`sysretq`/`iretq`), `syscall`/`sysret` setup (STAR/LSTAR/SFMASK), SMAP/SMEP on | User-mode test thread calls `debug_putc`; user access to kernel page faults |
-| P2.6 | Scheduler: round-robin within budgets, preemption on timer, throttling on budget use-up | Test: two spinning threads with 30%/70% budgets measure within ±5% of that |
-| P2.7 | IPC: send/recv/call/reply_recv, badges, cap transfer in messages | Ping-pong test between two user threads; cap passed over IPC is usable by the receiver; round-trip latency printed |
-| P2.8 | IRQ → Notification routing, `Irq` caps | Timer or serial IRQ delivered to a user-space waiter |
+| P2.5 | Context switch, ring-3 entry (`sysretq`/`iretq`), `syscall`/`sysret` setup (STAR/LSTAR/SFMASK), SMAP/SMEP on | **partial:** ring-3 selectors, user context, and syscall MSR setup landed; dispatcher, return path, SMAP/SMEP and user-thread boot remain |
+| P2.6 | Scheduler: round-robin within budgets, preemption on timer, throttling on budget use-up | **partial:** timer-driven budget-aware round-robin model and focused kernel tests landed; context switching and 30/70 user-thread measurement remain |
+| P2.7 | IPC: send/recv/call/reply_recv, badges, cap transfer in messages | Kernel endpoint foundation landed; scheduler/user-thread ping-pong remains |
+| P2.8 | IRQ → Notification routing, `Irq` caps | Kernel IRQ-router/notification foundation landed; hardware IDT delivery remains |
 | P2.9 | Minimal ELF loader for the root task (`init`) from a Limine module | `init` runs in ring 3 with its initial CSpace (all "untyped" authority) |
 | P2.10 | **ABI freeze**: ADR-0002, `docs/abi.md` marked v1 | Maintainer approves; later changes need a new ADR |
 
@@ -704,7 +704,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | **done** | P1.1–P1.7 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz, ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
-| P2 Caps/IPC/Budgets | review | Epic #55, Iteration 2 (from 2026-10-10); P2.2 `carv-caps` (#57) implemented 2026-09-29; P2.3 `carv-budget` (#58) in review |
+| P2 Caps/IPC/Budgets | review | Epic #55, Iteration 2 (from 2026-10-10); P2.2 `carv-caps` (#57) implemented 2026-09-29; P2.3 `carv-budget` (#58) in review; P2.9 loader foundations and P2.10 ABI v1/ADR-0002 implemented 2026-09-30; P2.5 ring-3 integration remains required |
 | P3 Runtime & svcmgr | not started | Epic #66 |
 | P4 Drivers | not started | Epic #78 |
 | P5 Versioned Store | not started | Epic #83 |

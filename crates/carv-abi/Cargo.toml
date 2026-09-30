@@ -1,0 +1,10 @@
+[package]
+name = "carv-abi"
+description = "Stable syscall and IPC ABI types for CarvOS"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

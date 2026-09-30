@@ -40,9 +40,13 @@ use limine::request::{
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 
 mod arch;
+mod ipc;
+pub mod elf;
 mod mm;
+pub mod objects;
 mod platform;
 mod serial;
+mod scheduler;
 mod sync;
 #[cfg(test)]
 mod test;
@@ -99,6 +103,7 @@ extern "C" fn kmain() -> ! {
 
     arch::x86_64::gdt::init();
     arch::x86_64::idt::init();
+    arch::x86_64::syscall::init();
     let sel = arch::x86_64::gdt::selectors();
     kprintln!(
         "  gdt/tss/idt: loaded (cs={:#x} ss={:#x} tss={:#x}; double-fault IST top {:#x})",

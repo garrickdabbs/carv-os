@@ -7,6 +7,17 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Added
+- P2.9/P2.10: allocation-free `no_std` ELF64 validation and segment-mapping abstractions for a
+  Limine root-task module, plus ADR-0002 and the frozen ABI v1 contract. Ring-3 address-space
+  integration remains P2.5 work.
+- P2.5/P2.6: kernel ring-3 selector and user-context abstractions, syscall MSR setup
+  (STAR/LSTAR/SFMASK), and a timer-driven budget-aware round-robin scheduler.
+- P2.7/P2.8: kernel IPC foundations for endpoint send/recv/call/reply, badge-bearing messages with
+  capability transfer, notification signal/wait words, and IRQ-to-notification routing.
+- P2.1: added the `carv-abi` crate with syscall numbers, IPC message layout, error codes, and
+  capability-rights bits, documented in `docs/abi.md`.
+- P2.4: kernel object registry with budget-charged Thread, AddressSpace, Frame, Endpoint,
+  Notification, Budget, and Reply objects, plus ABI-independent `invoke` dispatch abstractions.
 - P2.2: `carv-caps`, a pure `no_std` capability-space library with fixed slots, attenuating copy and
   badge minting, derivation tracking, descendant revocation, and proptest coverage.
 
