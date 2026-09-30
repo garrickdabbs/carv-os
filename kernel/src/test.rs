@@ -129,6 +129,7 @@ fn scheduler_round_robin_skips_throttled_threads() {
     scheduler.add(crate::scheduler::Thread::new(2, 8_000_000, 10_000_000, 0));
     assert_eq!(scheduler.tick(1_000_000), Some(1));
     assert_eq!(scheduler.tick(1_000_000), Some(2));
+    assert_eq!(scheduler.tick(1_000_000), Some(1));
     assert_eq!(scheduler.tick(1_000_000), Some(2));
 }
 
