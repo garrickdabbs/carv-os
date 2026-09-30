@@ -36,6 +36,9 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ### Fixed
 - P2.6: correct the scheduler kernel test to account for the initial dispatch not charging a thread;
   verify round-robin skips it only after its budget is exhausted.
+- `cargo xtask image` pins the ISO's volume id (`CARVOS`), application id (`CarvOS`) and preparer id: without
+  them xorriso writes its own version string into the volume descriptors, the one remaining difference (16 bytes)
+  between a Fedora build and the runner's `v0.1.1-rc.1` image (kernel ELF and every file were already identical).
 - P1.6: migrate ACPI table parsing to `acpi` 6.1.1, including the expanded `Handler` contract,
   revised table iteration and platform/MCFG APIs.
 - ACPI MADT existence assertion in `kernel/src/test.rs` now prints the parsed table names
@@ -77,11 +80,6 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   counted for the Budget accounting that arrives with P2.4. An explicit `#[alloc_error_handler]` reports
   `kernel heap exhausted` with the request and heap state and takes the panic path; the `oom` smoke scenario
   (`oom-test` on the cmdline) proves it.
-
-### Fixed
-- `cargo xtask image` pins the ISO's volume id (`CARVOS`), application id (`CarvOS`) and preparer id: without
-  them xorriso writes its own version string into the volume descriptors, the one remaining difference (16 bytes)
-  between a Fedora build and the runner's `v0.1.1-rc.1` image (kernel ELF and every file were already identical).
 
 ## [0.1.1] - 2026-09-27
 
