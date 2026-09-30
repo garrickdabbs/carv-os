@@ -39,9 +39,10 @@ APIC timer at 1 kHz, parses the ACPI tables (MADT, HPET, MCFG), enumerates PCI(e
 (virtio-blk and virtio-net are found), then idles. Fifteen in-kernel tests and seven boot scenarios
 (UEFI, BIOS, panic, double fault, page fault, stack overflow, heap exhaustion) run on every PR.
 
-There is no scheduler, no user space, and no filesystem yet: **Phase 2** (capabilities, threads,
-IPC, budgets, ending in the ABI freeze) is the next milestone and is queued for the maintainer's go.
-Progress is tracked in [`docs/PLAN.md` §11](docs/PLAN.md#11-status-tracker),
+There is no user space or filesystem yet. Phase 2 is in progress: its ABI, pure capability and budget
+libraries, kernel object registry, and kernel-side IPC/scheduler foundations are implemented, while
+ring-3 execution and hardware-integrated user-thread behavior remain. Progress is tracked in
+[`docs/PLAN.md` §11](docs/PLAN.md#11-status-tracker),
 [`CHANGELOG.md`](CHANGELOG.md), and the
 [CarvOS Prototype project board](https://github.com/users/garrickdabbs/projects/3) (one issue per
 plan task, grouped by phase epic).
