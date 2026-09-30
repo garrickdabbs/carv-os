@@ -8,8 +8,9 @@
 **CARV** stands for **Capability Authority & Resource Versioning**: every action needs an explicit
 capability (*authority*), every resource is budgeted and every change is kept (*resource versioning*).
 
-> **Status (2026-09-29):** Phases 0 and 1 complete (`v0.1.1` released, reproducible across machines);
-> Phase 2 queued in board Iteration 2 pending the maintainer's go. Epics now exist for every phase
+> **Status (2026-09-30):** Phases 0 and 1 complete (`v0.1.1` released, reproducible across machines);
+> Phase 2 is in progress: P2.1–P2.4 and P2.10 are complete, while the remaining kernel integration
+> tasks are partial or open. Epics now exist for every phase
 > (#46, #55, #66, #78, #83, #90, #104, #110, #118). Details in §11.
 
 ### Naming conventions
@@ -564,7 +565,7 @@ phase's interfaces are frozen.
 | P2.2 | `carv-caps` (pure): CSpace, capability slots, copy/mint/revoke, derivation tree | Proptest: after revoke(c), no descendant of c is reachable; rights never grow |
 | P2.3 | `carv-budget` (pure): CPU budget/period refill, memory limit, hierarchical carve-out, token bucket | Host tests: child limits never exceed parent; refill math correct over simulated time |
 | P2.4 | Kernel objects: Thread, AddressSpace, Frame, Endpoint, Notification, Budget, Reply | Kernel tests create and destroy each object via `invoke`; memory charged/credited to the budget |
-| P2.5 | Context switch, ring-3 entry (`sysretq`/`iretq`), `syscall`/`sysret` setup (STAR/LSTAR/SFMASK), SMAP/SMEP on | **partial:** ring-3 selectors, user context, and syscall MSR setup landed; dispatcher, return path, SMAP/SMEP and user-thread boot remain |
+| P2.5 | Context switch, ring-3 entry (`sysretq`/`iretq`), `syscall`/`sysret` setup (STAR/LSTAR/SFMASK), SMAP/SMEP on | **partial:** ring-3 selectors, user context, syscall MSR setup, and CR4 SMAP/SMEP setup landed; dispatcher, return path, context switching, user-thread boot, and focused enforcement tests remain |
 | P2.6 | Scheduler: round-robin within budgets, preemption on timer, throttling on budget use-up | **partial:** timer-driven budget-aware round-robin model and focused kernel tests landed; context switching and 30/70 user-thread measurement remain |
 | P2.7 | IPC: send/recv/call/reply_recv, badges, cap transfer in messages | Kernel endpoint foundation landed; scheduler/user-thread ping-pong remains |
 | P2.8 | IRQ → Notification routing, `Irq` caps | Kernel IRQ-router/notification foundation landed; hardware IDT delivery remains |
@@ -704,7 +705,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | **done** | P1.1–P1.7 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz, ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
-| P2 Caps/IPC/Budgets | review | Epic #55, Iteration 2 (from 2026-10-10); P2.2 `carv-caps` (#57) implemented 2026-09-29; P2.3 `carv-budget` (#58) in review; P2.9 loader foundations and P2.10 ABI v1/ADR-0002 implemented 2026-09-30; P2.5 ring-3 integration remains required |
+| P2 Caps/IPC/Budgets | **in progress** | Epic #55; P2.1–P2.4 (#56–#59) and P2.10 (#65) complete; P2.5 (#60) is next, with P2.6–P2.9 (#61–#64) partial/open. P2.5 → P2.6 → P2.7/P2.8 → P2.9 is the coordinated merge order |
 | P3 Runtime & svcmgr | not started | Epic #66 |
 | P4 Drivers | not started | Epic #78 |
 | P5 Versioned Store | not started | Epic #83 |
