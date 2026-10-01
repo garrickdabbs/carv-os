@@ -36,12 +36,13 @@ order: brings up the serial console, loads a GDT/TSS/IDT with a handler for ever
 builds a physical frame allocator from the memory map, adopts the bootloader's page tables with its
 own mapper, installs a 1 MiB kernel heap (`alloc` works), masks the legacy PICs and runs the local
 APIC timer at 1 kHz, parses the ACPI tables (MADT, HPET, MCFG), enumerates PCI(e) through ECAM
-(virtio-blk and virtio-net are found), then idles. Fifteen in-kernel tests and seven boot scenarios
+(virtio-blk and virtio-net are found), then idles. Twenty-two in-kernel tests and seven boot scenarios
 (UEFI, BIOS, panic, double fault, page fault, stack overflow, heap exhaustion) run on every PR.
 
-There is no user space or filesystem yet. Phase 2 is in progress: its ABI, pure capability and budget
-libraries, kernel object registry, and kernel-side IPC/scheduler foundations are implemented, while
-ring-3 execution and hardware-integrated user-thread behavior remain. Progress is tracked in
+There is no user space or filesystem yet. Phase 2 is in progress: the ABI crate and the pure
+capability and budget libraries are done, and the kernel has foundations for an object registry,
+syscall MSR setup, a scheduler model, IPC endpoints and IRQ routing, but no code runs in ring 3
+yet. Progress is tracked in
 [`docs/PLAN.md` §11](docs/PLAN.md#11-status-tracker),
 [`CHANGELOG.md`](CHANGELOG.md), and the
 [CarvOS Prototype project board](https://github.com/users/garrickdabbs/projects/3) (one issue per
@@ -200,12 +201,16 @@ A rolling, unsigned `nightly` pre-release tracks `main`. All `0.y.z` releases ar
 
 ```
 kernel/          chisel, the microkernel (no_std, x86_64-unknown-none):
-                   arch/x86_64 (GDT, IDT, ports, PIC, PIT, local APIC), mm (frames, paging, heap),
-                   platform (ACPI, PCI), serial console, sync primitives, in-kernel tests
-crates/          pure, host-testable libraries: carv-frames (bitmap frame allocator)
+                   arch/x86_64 (GDT, IDT, ports, PIC, PIT, local APIC, syscall MSRs), mm (frames,
+                   paging, heap), platform (ACPI, PCI), objects, ipc, scheduler, elf, serial
+                   console, sync primitives, in-kernel tests
+crates/          pure, host-testable libraries: carv-frames (bitmap frame allocator), carv-abi
+                   (syscall/IPC ABI types), carv-caps (CSpace + derivation tree), carv-budget
+                   (CPU/memory/token-bucket accounting)
 xtask/           cargo xtask: build, limine, image, run, smoke, test, perf, docs-gate, release-check, help
 docs/PLAN.md     design, roadmap with task IDs, GitHub infrastructure, status
-docs/adr/        architecture decision records (as they are written)
+docs/abi.md      syscall and IPC ABI (v1, ADR-0002)
+docs/adr/        architecture decision records
 .github/         CI workflows, Dependabot, CODEOWNERS, PR and issue templates
 CLAUDE.md        rules for AI coding agents working in this repo
 CHANGELOG.md     Keep-a-Changelog; every PR adds a line under Unreleased

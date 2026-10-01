@@ -8,10 +8,10 @@
 **CARV** stands for **Capability Authority & Resource Versioning**: every action needs an explicit
 capability (*authority*), every resource is budgeted and every change is kept (*resource versioning*).
 
-> **Status (2026-09-30):** Phases 0 and 1 complete (`v0.1.1` released, reproducible across machines);
-> Phase 2 is in progress: P2.1–P2.4 and P2.10 are complete, while the remaining kernel integration
-> tasks are partial or open. Epics now exist for every phase
-> (#46, #55, #66, #78, #83, #90, #104, #110, #118). Details in §11.
+> **Status (2026-10-01):** Phases 0 and 1 complete (`v0.1.1` released, reproducible across machines);
+> Phase 2 in progress: the pure crates P2.1–P2.3 are done; P2.4–P2.10 are partial (kernel-side
+> foundations only, nothing runs in ring 3 yet; P2.4 and P2.10 were reopened after review). Epics
+> exist for every phase (#46, #55, #66, #78, #83, #90, #104, #110, #118). Details in §11.
 
 ### Naming conventions
 | Form | Use it for |
@@ -231,7 +231,7 @@ carv-os/
 │   │   ├── perf.yml            # `perf`: cargo xtask perf size/boot-time budgets
 │   │   ├── codeql.yml         # code scanning (public repo), advisory only
 │   │   ├── scorecard.yml      # OpenSSF Scorecard (public repo), advisory only
-│   │   ├── nightly.yml        # stress loops, perf budgets, cargo audit, toolchain drift, nightly pre-release (fuzz/Miri/geiger planned but not yet wired in, §7.3/§9.6; "Nightly is failing" issue automation not yet implemented, §7.4)
+│   │   ├── nightly.yml        # stress loops, perf budgets, cargo audit, toolchain drift, nightly pre-release, pinned "Nightly is failing" issue (§7.4); fuzz/Miri/geiger planned but not yet wired in (§7.3, P9.6)
 │   │   └── release.yml        # tag v* → reproducible ISO, tests, SBOM, Sigstore signature, attestation, Release
 │   ├── dependabot.yml         # cargo + github-actions, weekly, grouped
 │   ├── release.yml            # release-notes categories by task prefix
@@ -364,7 +364,7 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
 - **Board mechanics (set up 2026-09-27):** the *CarvOS Prototype* user project (#3) with Status
   *Backlog / Ready / In progress / In review / Done*, 14-day iterations (Iteration 1 from 2026-09-26;
   Phase N's tasks sit in Iteration N, when that iteration exists — only Iterations 1–5 are
-  configured as of this PR (through 2026-12-05), so Phase 6's epic (#90) is already Backlog with
+  configured as of 2026-10-01 (through 2026-12-05), so Phase 6's epic (#90) is already Backlog with
   no iteration, and Phase 7–9 epics/tasks are Backlog with no iteration too, until Iterations 6–9
   are added). Phase epics #46 (P1), #55 (P2), #66 (P3), #78 (P4), #83 (P5), #90 (P6), #104 (P7), #110
   (P8) and #118 (P9) hold one sub-issue per task ID with the AC copied from §8; the epic's sub-issue
@@ -561,16 +561,16 @@ phase's interfaces are frozen.
 ### Phase 2 — Capabilities, Threads, IPC, Budgets (the heart; freeze the ABI at the end)
 | ID | Task | AC |
 |---|---|---|
-| P2.1 | `carv-abi` crate: syscall numbers, error enum, message layout, rights bits | Host-compiles; documented in `docs/abi.md` |
-| P2.2 | `carv-caps` (pure): CSpace, capability slots, copy/mint/revoke, derivation tree | Proptest: after revoke(c), no descendant of c is reachable; rights never grow |
-| P2.3 | `carv-budget` (pure): CPU budget/period refill, memory limit, hierarchical carve-out, token bucket | Host tests: child limits never exceed parent; refill math correct over simulated time |
-| P2.4 | Kernel objects: Thread, AddressSpace, Frame, Endpoint, Notification, Budget, Reply | Kernel tests create and destroy each object via `invoke`; memory charged/credited to the budget |
-| P2.5 | Context switch, ring-3 entry (`sysretq`/`iretq`), `syscall`/`sysret` setup (STAR/LSTAR/SFMASK), SMAP/SMEP on | **partial:** ring-3 selectors, user context, syscall MSR setup, and CR4 SMAP/SMEP setup landed; dispatcher, return path, context switching, user-thread boot, and focused enforcement tests remain |
-| P2.6 | Scheduler: round-robin within budgets, preemption on timer, throttling on budget use-up | **partial:** timer-driven budget-aware round-robin model and focused kernel tests landed; context switching and 30/70 user-thread measurement remain |
-| P2.7 | IPC: send/recv/call/reply_recv, badges, cap transfer in messages | Kernel endpoint foundation landed; scheduler/user-thread ping-pong remains |
-| P2.8 | IRQ → Notification routing, `Irq` caps | Kernel IRQ-router/notification foundation landed; hardware IDT delivery remains |
-| P2.9 | Minimal ELF loader for the root task (`init`) from a Limine module | `init` runs in ring 3 with its initial CSpace (all "untyped" authority) |
-| P2.10 | **ABI freeze**: ADR-0002, `docs/abi.md` marked v1 | Maintainer approves; later changes need a new ADR |
+| P2.1 | `carv-abi` crate: syscall numbers, error enum, message layout, rights bits | Host-compiles; documented in `docs/abi.md` — **done 2026-09-30** (#56) |
+| P2.2 | `carv-caps` (pure): CSpace, capability slots, copy/mint/revoke, derivation tree | Proptest: after revoke(c), no descendant of c is reachable; rights never grow — **done 2026-09-29** (#57; derivation is per-CSpace, cross-CSpace revocation is #141, node reclamation #142) |
+| P2.3 | `carv-budget` (pure): CPU budget/period refill, memory limit, hierarchical carve-out, token bucket | Host tests: child limits never exceed parent; refill math correct over simulated time — **done 2026-09-29** (#58; the §3.3 D energy estimate is not implemented yet) |
+| P2.4 | Kernel objects: Thread, AddressSpace, Frame, Endpoint, Notification, Budget, Reply | Kernel tests create and destroy each object via `invoke`; memory charged/credited to the budget — **partial (#59, reopened 2026-10-01):** `kernel/src/objects.rs` has a registry where each object type is charged to and credited back to its budget, and objects can be destroyed via `invoke`. Remaining: objects created via `invoke`; the registry actually used by the kernel (objects are type tags with no state); child budgets carved out of their parent via `carv-budget` (today a child's limit can exceed its parent's) |
+| P2.5 | Context switch, ring-3 entry (`sysretq`/`iretq`), `syscall`/`sysret` setup (STAR/LSTAR/SFMASK), SMAP/SMEP on | User-mode test thread calls `debug_putc`; user access to kernel page faults — **partial (#60):** ring-3 selectors, `UserContext`, STAR/LSTAR/SFMASK and CR4 SMEP/SMAP landed; `syscall_entry` only halts. Remaining: entry stub and kernel-stack switch, dispatcher, `sysretq`/`iretq` return, context switch, the ring-3 `debug_putc` test and the kernel-page fault test. Blocked by #140 |
+| P2.6 | Scheduler: round-robin within budgets, preemption on timer, throttling on budget use-up | Test: two spinning threads with 30%/70% budgets measure within ±5% of that — **partial (#61):** `kernel/src/scheduler.rs` is a budget-aware round-robin *model* ticked by the LAPIC timer that never switches threads, and it reimplements the refill math instead of using `carv-budget`. Remaining: real preemptive switching and the 30/70 measurement |
+| P2.7 | IPC: send/recv/call/reply_recv, badges, cap transfer in messages | Ping-pong test between two user threads; cap passed over IPC is usable by the receiver; round-trip latency printed — **partial (#62):** `kernel/src/ipc.rs` has non-blocking endpoint queues, badges and cap transfer, tested in-kernel. Remaining: blocking through the scheduler, the user-thread ping-pong and latency; the message layout must match `carv-abi` (#65); transfer bugs in #141 |
+| P2.8 | IRQ → Notification routing, `Irq` caps | Timer or serial IRQ delivered to a user-space waiter — **partial (#63):** `Notification` and an `IrqRouter` (GSI → notification) landed, tested by calling `dispatch` directly. Remaining: real IDT/I/O-APIC delivery, `Irq` as a capability, and a user-space waiter |
+| P2.9 | Minimal ELF loader for the root task (`init`) from a Limine module | `init` runs in ring 3 with its initial CSpace (all "untyped" authority) — **partial (#64):** `kernel/src/elf.rs` validates ELF64 images (rejects segments that are both writable and executable) behind a `SegmentMapper` trait; it has no tests and nothing calls it. Remaining: a Limine module request, an `init` binary, a user address-space mapper, and `init` actually running in ring 3 |
+| P2.10 | **ABI freeze**: ADR-0002, `docs/abi.md` marked v1 | Maintainer approves; later changes need a new ADR — **partial (#65, reopened 2026-10-01):** ADR-0002 marks `docs/abi.md` v1 frozen, but that happened before P2.5–P2.9 exist, and the kernel doesn't follow it yet: `kernel/src/ipc.rs::Message` has 4 words and no label/info, while the frozen ABI specifies 6 words plus label and info; `Rights` is defined separately in both `carv-caps` and `carv-abi`. Signed off once the kernel's IPC/syscall path uses the `carv-abi` types; any layout correction needs a new ADR |
 
 ### Phase 3 — User-Space Runtime & Service Manager
 | ID | Task | AC |
@@ -705,7 +705,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | **done** | P1.1–P1.7 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz, ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
-| P2 Caps/IPC/Budgets | **in progress** | Epic #55; P2.1–P2.4 (#56–#59) and P2.10 (#65) complete; P2.5 (#60) is next, with P2.6–P2.9 (#61–#64) partial/open. P2.5 → P2.6 → P2.7/P2.8 → P2.9 is the coordinated merge order |
+| P2 Caps/IPC/Budgets | **in progress** | Epic #55. **Done:** P2.1 `carv-abi` (#56), P2.2 `carv-caps` (#57), P2.3 `carv-budget` (#58). **Partial (reopened 2026-10-01):** P2.4 kernel objects (#59) and P2.10 ABI freeze (#65), see their rows. **Partial:** P2.5–P2.9 (#60–#64), foundations only, with no code running in ring 3 yet. **Bugs:** #140 (STAR/GDT order gives the wrong user SS on `sysret`), #141 (IPC cap transfer skips GRANT and escapes revocation), #142 (`carv-caps` never reclaims nodes). The kernel depends on `carv-caps` but not yet on `carv-abi` or `carv-budget`. Merge order: P2.5 → P2.6 → P2.7/P2.8 → P2.9 → P2.4/P2.10 sign-off |
 | P3 Runtime & svcmgr | not started | Epic #66 |
 | P4 Drivers | not started | Epic #78 |
 | P5 Versioned Store | not started | Epic #83 |
@@ -729,8 +729,11 @@ If blocked by a design question, write it up in the PR and stop rather than gues
   ruleset exists); §7.5's release flow and §12's risk mitigation assumed one. Agents never create or
   edit rulesets, so adding a tag ruleset is a maintainer action.
 - **Iterations 6–9:** the board's Iteration field only has Iterations 1–5 configured (through
-  2026-12-05). Phase 7/8/9 epics (#104, #110, #118) and their sub-issues are in Backlog with no
-  iteration until the maintainer adds Iterations 7–9.
+  2026-12-05). The Phase 6–9 epics (#90, #104, #110, #118), their sub-issues and #126 have no
+  iteration until the maintainer adds Iterations 6–9.
+- **Phase 2 sign-off (2026-10-01):** P2.4 (#59) and P2.10 (#65) were reopened because their AC are
+  unmet (see their §8 rows). Approving the ABI freeze stays a maintainer decision; it happens once
+  the kernel's IPC/syscall path uses the `carv-abi` types.
 
 **Deferred to later tasks:** nextest + JUnit output (P9.6), `cargo vet` (P9.7), fuzzing once parsers
 exist (P9.3), Miri/geiger/coverage/50-boot stress in nightly (P9.6), `cargo geiger` in CI (P9.6).
