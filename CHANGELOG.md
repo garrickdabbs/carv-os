@@ -58,7 +58,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - P2.5 (#140): the GDT now places user data 8 bytes below user code, so `sysretq` loads SS from the
   user data descriptor instead of the upper half of the TSS descriptor; STAR is programmed with
   `Star::write`, which panics at boot on an incompatible layout, and an in-kernel test checks that
-  STAR decodes back to the GDT selectors.
+  STAR decodes back to the GDT selectors. LSTAR and SFMASK use the crate's typed writers too, which
+  removes the `unsafe` block from `syscall::init`.
 - P2.6: correct the scheduler kernel test to account for the initial dispatch not charging a thread;
   verify round-robin skips it only after its budget is exhausted.
 - `cargo xtask image` pins the ISO's volume id (`CARVOS`), application id (`CarvOS`) and preparer id: without

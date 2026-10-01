@@ -128,6 +128,18 @@ fn star_matches_gdt_layout_for_sysret() {
 }
 
 #[test_case]
+fn syscall_entry_msrs_are_programmed() {
+    use x86_64::registers::model_specific::{LStar, SFMask};
+    use x86_64::registers::rflags::RFlags;
+    // LSTAR must point into the kernel's higher half; SFMASK must clear IF and DF on entry.
+    assert!(LStar::read().as_u64() >= 0xffff_8000_0000_0000);
+    assert_eq!(
+        SFMask::read(),
+        RFlags::INTERRUPT_FLAG | RFlags::DIRECTION_FLAG
+    );
+}
+
+#[test_case]
 fn user_context_starts_with_safe_flags() {
     let context = crate::arch::x86_64::syscall::UserContext::new(0x4000, 0x8000);
     assert_eq!(context.rip, 0x4000);
