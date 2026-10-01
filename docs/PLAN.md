@@ -351,9 +351,11 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
   Set **"do not allow bypass"** so even the maintainer merges through CI. Solo maintainer: approvals
   are *not* required (you'd be approving your own PRs), CI is the gate.
 - **Agent credentials.** Agents run on the maintainer's machine using the maintainer's `gh` login,
-  which has admin rights. Give agents a **fine-grained PAT** (or a GitHub App) scoped to this repo
-  with only `contents: write` and `pull_requests: write`, no admin. Rulesets then bind agents
-  mechanically: they can push branches and open PRs but can never merge to `main` without CI.
+  which has admin rights. A fine-grained PAT on the maintainer's account doesn't separate them: it
+  can still merge once checks pass, can't write the user-owned board, and authors PRs as the
+  maintainer. The plan is therefore a **machine account** with Write access and a classic token,
+  plus one required maintainer approval on `main`, so agents can push branches and open PRs but
+  can't merge, tag or edit rulesets. Scheduled as **P9.8** (#144), moved from P0.7 on 2026-10-01.
 - **`CODEOWNERS`:** `kernel/`, `crates/carv-abi/`, `docs/abi.md`, `docs/adr/`, `.github/`, `deny.toml`
   → maintainer. Changes there get a review request automatically.
 - **Templates:** PR template (task ID, AC checklist, pasted `cargo xtask test` output, unsafe-block
@@ -544,7 +546,7 @@ phase's interfaces are frozen.
 | P0.4 | `isa-debug-exit` + in-kernel test framework | `cargo xtask test` runs a trivial test, QEMU exits with the pass code — **done 2026-09-27**: 5 `#[test_case]`s, exit 33/35 mapped by `xtask`, `test` runs host + kernel + smoke layers |
 | P0.5 | Lint (fmt, clippy both targets, doc, `cargo deny`), host tests (`cargo test`; nextest + JUnit deferred to P9.6), kernel tests and integration tests in QEMU with KVM enabled, five required checks — now delivered as `build.yml`, `ci.yml`, `security.yml`, `docs.yml` and `perf.yml` per §7.2 rather than one `ci.yml`; `deny.toml`, `dependabot.yml`; all actions SHA-pinned with least-privilege `permissions` | PR shows the five required checks (`build`, `boot-smoke`, `security`, `docs`, `perf`) green; a deliberately failing kernel test uploads `serial.log`; Dependabot opens its first PR — **done 2026-09-27**. History: an initial single required `all-green` check existed briefly before the split into one workflow per README badge (§7.2) |
 | P0.6 | `README.md` (build, run, verify-a-release sections), `docs/adr/0001-microkernel-rust-x86_64.md`, `CHANGELOG.md`, `SECURITY.md`, `LICENSE` | Files exist; README badges for CI and Scorecard render — **done 2026-09-27** |
-| P0.7 | Repo governance per §7.1: `main` ruleset (PR + the five required checks, merge commits only, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board, fine-grained PAT for agents | Direct push to `main` is rejected; a PR without all five checks green can't merge; agent token can't merge — **partial, 2026-09-27**: the live `main` ruleset (`gh api repos/garrickdabbs/carv-os/rulesets`) requires `build`, `boot-smoke`, `security`, `docs` and `perf`, allows merge commits only (not linear history/squash), requires review-thread resolution and has no bypass, matching §7.1; `CODEOWNERS`, templates, labels and the Project board are in place. **Not done:** the fine-grained agent PAT — agents still run under the maintainer's own admin `gh` login, so the "agent token can't merge" AC is unverified. Tracked in §11 "Open maintainer decisions" |
+| P0.7 | Repo governance per §7.1: `main` ruleset (PR + the five required checks, merge commits only, no bypass), `CODEOWNERS`, PR and issue templates, labels, Project board | Direct push to `main` is rejected; a PR without all five checks green can't merge — **done 2026-09-27**: the live `main` ruleset (`gh api repos/garrickdabbs/carv-os/rulesets`) requires `build`, `boot-smoke`, `security`, `docs` and `perf`, allows merge commits only (not linear history/squash), requires review-thread resolution and has no bypass, matching §7.1; `CODEOWNERS`, templates, labels and the Project board are in place. The agent-credential part (originally "fine-grained PAT for agents; agent token can't merge") moved to **P9.8** (#144) on 2026-10-01 |
 | P0.8 | `release.yml` per §7.5 + `cargo xtask release-check`: reproducible ISO, tests against artifacts, boot-smoke, SHA256SUMS, SBOM, Sigstore signature, build provenance attestation, GitHub Release with generated notes. `nightly.yml` (daily tests, stress, perf, audit, toolchain drift, rolling `nightly` pre-release) | Tag `v0.1.0` produces a release whose ISO boots to the banner and passes `gh attestation verify`; two runs produce identical ISO hashes — **pipeline landed 2026-09-27; validated with `v0.1.0-rc.1`, then `v0.1.0`** |
 
 ### Phase 1 — Kernel Core
@@ -643,6 +645,7 @@ phase's interfaces are frozen.
 | P9.5 | Security review against a threat model doc (`docs/threat-model.md`) | Review doc + issues filed |
 | P9.6 | Reproducible-build verification job (two runners, identical ISO hash), `cargo llvm-cov` on pure crates, Miri + `cargo geiger` in nightly, crash-consistency and 50-boot stress loops in nightly | Nightly green for 7 consecutive days; geiger count tracked in the summary — **reproducible-build part done 2026-09-27** (`trim-paths`, stripped ISO kernel, cross-directory second pass in `release.yml`; coverage/Miri/geiger/stress loops still open) |
 | P9.7 | Supply-chain hardening: CodeQL and OpenSSF Scorecard workflows (repo public — **landed in Phase 0; Scorecard 7/10 on 2026-09-27, #35**), `cargo vet` audits for kernel and driver dependencies, `SECURITY.md` process exercised once with a mock report, OpenSSF Best Practices badge (needs maintainer registration) | Scorecard ≥ 7; `cargo vet` passes with no unaudited kernel deps |
+| P9.8 | Agent credentials (moved from P0.7, 2026-10-01; #144): a machine account with Write access on the repo and the board, a classic token (`repo`, `workflow`, `project`) used only by agent sessions, and 1 required approval on `main` with a pull-request-only bypass for the Repository admin role | With the bot token: `gh pr merge` on a bot-authored PR fails with "approval required", editing a ruleset returns 403/404, and pushing a `v*` tag is refused |
 
 ### Phase 10 — Stretch Ideas (pick for fun)
 - SMP: per-CPU run queues, IPIs, TLB shootdown.
@@ -712,19 +715,18 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | P6 Shell & Coreutils | not started | Epic #90; no iteration assigned yet — only Iterations 1–5 exist |
 | P7 Users & Auth | not started | Epic #104 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist |
 | P8 Networking | not started | Epic #110 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist |
-| P9 Hardening | partial | Epic #118 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist. Landed early: CodeQL + Scorecard workflows (P9.7, Phase 0), reproducible builds across machines (P9.6 part, #42, 2026-09-27). Rest not started |
+| P9 Hardening | partial | Epic #118 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist. Landed early: CodeQL + Scorecard workflows (P9.7, Phase 0), reproducible builds across machines (P9.6 part, #42, 2026-09-27). P9.8 agent credentials (#144) added 2026-10-01, moved from P0.7. Rest not started |
 
 (Better: mirror these as GitHub Issues with a Project board; one issue per task ID, labeled by phase.)
 
 **Open maintainer decisions (2026-09-29, from #35 plus this review):**
-- Branch-protection approval tiers (required approver / CODEOWNERS review / last-push approval).
-  With one maintainer this blocks the autonomous loop; options: leave as is, add a second reviewer
-  account and require one approval, or enable with admin bypass.
+- Branch-protection approval tiers (required approver / CODEOWNERS review / last-push approval):
+  **scheduled as P9.8 (#144)**, which requires one approval with a pull-request-only admin bypass
+  once agents have their own account. Until then, leave the rule unchanged.
 - OpenSSF Best Practices badge: registration at bestpractices.dev needs the maintainer's login; the
   questionnaire can then be answered from README/SECURITY/CONTRIBUTING.
-- **Fine-grained agent PAT (P0.7):** §7.1 calls for agents to run under a fine-grained PAT scoped to
-  `contents: write` + `pull_requests: write` with no admin rights; today agents use the maintainer's
-  own `gh` login, which has admin rights. Creating and distributing that PAT is a maintainer action.
+- **Agent credentials:** moved from P0.7 to **P9.8 (#144)** on 2026-10-01 (machine account instead
+  of a fine-grained PAT, see §7.1). Until then agents keep using the maintainer's admin `gh` login.
 - **`v*` tag ruleset:** no ruleset protects tag creation/deletion today (only the `main` branch
   ruleset exists); §7.5's release flow and §12's risk mitigation assumed one. Agents never create or
   edit rulesets, so adding a tag ruleset is a maintainer action.
@@ -752,7 +754,7 @@ exist (P9.3), Miri/geiger/coverage/50-boot stress in nightly (P9.6), `cargo geig
 | Agents claim "done" without proof | AC are machine-checkable; CI must be green; PR template requires pasted test output |
 | Nightly Rust breakage | Pin an exact nightly date in `rust-toolchain.toml`; bump deliberately |
 | Compromised dependency or GitHub Action | `cargo deny` sources = crates.io only, `cargo vet` for kernel deps, actions pinned to commit SHAs, Dependabot reviews every bump, least-privilege `permissions` |
-| Agent merges or tags without CI | `main` ruleset with no bypass; agents use `gh` under the maintainer's login (a scoped fine-grained PAT is still a pending maintainer action, §11) and are instructed never to tag or edit rulesets. **No `v*` tag ruleset exists yet** — tag protection is a pending maintainer action (§11); until then, tagging is a purely human/process control, not a mechanical one |
+| Agent merges or tags without CI | `main` ruleset with no bypass; agents use `gh` under the maintainer's login until a separate agent account with a required maintainer approval lands in P9.8 (#144) and are instructed never to tag or edit rulesets. **No `v*` tag ruleset exists yet** — tag protection is a pending maintainer action (§11); until then, tagging is a purely human/process control, not a mechanical one |
 | Tampered or mistaken release download | Reproducible builds, `SHA256SUMS`, Sigstore signature, SLSA provenance; releases are never re-uploaded, only superseded |
 | CI slow or flaky under TCG emulation | KVM enabled on GitHub Linux runners; TCG fallback scales timeouts; no retries, so flakes surface and get fixed |
 | Review comments land after the merge (auto-merge races Copilot and the monitoring loop) | No auto-merge on fresh PRs; ≥ 15-minute review window after every push; every thread answered and resolved before merging; periodic audit that all merged PRs have zero unresolved threads (§7.1) |
