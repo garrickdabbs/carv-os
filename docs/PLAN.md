@@ -368,8 +368,9 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
   Priority values on open items: the *Prioritized backlog* view is one list in **phase → task
   order** (each epic, then its tasks by ID, with related bugs and follow-ups next to their task),
   and the maintainer works top-down. New issues go into that order by hand. Phase epics #46 (P1),
-  #55 (P2), #66 (P3), #78 (P4), #83 (P5), #90 (P6), #104 (P7), #110 (P8) and #118 (P9) hold one sub-issue per task ID with the AC copied from §8; the epic's sub-issue
-  counter is the phase progress. Built-in project workflows do the automatic moves: auto-add on creation,
+  #55 (P2), #66 (P3), #78 (P4), #83 (P5), #90 (P6), #104 (P7), #110 (P8) and #118 (P9) hold one
+  sub-issue per task ID with the AC copied from §8; the epic's sub-issue counter is the phase
+  progress. Built-in project workflows do the automatic moves: auto-add on creation,
   item closed → Done, PR merged → Done, PR linked to issue, auto-close issue when set to Done,
   auto-add sub-issues. Agents set *In progress* and *In review* with `gh` and link PRs with
   `Closes #<task>` + `task: <ID>` in the body. No repository workflow touches the board: `GITHUB_TOKEN`
