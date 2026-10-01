@@ -32,6 +32,27 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   address per function; virtio devices are named (blk, net, rng, console, 9p). Boot prints
   the list, the UEFI/BIOS smoke scenarios expect `virtio-blk` and `virtio-net`, and an in-kernel test requires
   the q35 host bridge and both virtio devices with matching class codes.
+- P1.6: ACPI tables — `platform::acpi` parses the RSDP Limine hands over with the `acpi` crate (5.x, `alloc`),
+  reaching tables through the HHDM (a region with pages the direct map skips is mapped whole, read-only and
+  cached, into a small window via the new `paging::map_reserved`), and keeps a
+  `Summary`: table signatures, MADT local-APIC address, CPU APIC ids and I/O APICs, HPET base, and MCFG ECAM
+  regions for P1.7. Boot prints all of it; the UEFI/BIOS smoke scenarios expect the HPET line; an in-kernel test
+  checks the MADT, matches the boot CPU's APIC id against the running local APIC, and requires HPET and MCFG.
+- P1.5: local APIC + timer — the legacy 8259 PICs are remapped and masked (`arch::x86_64::pic`), the xAPIC register page is
+  mapped uncached at `paging::KERNEL_MMIO_BASE` (new `paging::map_mmio`; Limine's direct map does not cover device
+  memory) and enabled (`arch::x86_64::apic`), its timer is calibrated against PIT channel 2
+  (`arch::x86_64::pit::busy_wait_ms`) and runs periodic at 1 kHz on vector 32 with a spurious-vector handler;
+  the PICs' 16 vectors (`0xE0..=0xEF`) get no-op handlers so a spurious IRQ7/IRQ15 is swallowed; boot enables
+  interrupts, requires 90–110 ticks over a PIT-timed 100 ms (panics otherwise) and prints the success line the
+  UEFI/BIOS smoke scenarios expect;
+  an in-kernel test counts 100 ± 10 ticks over a PIT-timed 100 ms wait.
+- P1.4: kernel heap — `kernel::mm::heap` maps 1 MiB of fresh frames at `KERNEL_DYNAMIC_BASE + 256 MiB` and
+  installs `linked_list_allocator` (no default features) as the `#[global_allocator]` behind the kernel spin lock
+  with interrupts off; `alloc` is enabled in `chisel`; boot prints the heap layout; in-kernel tests exercise
+  `Vec`/`Box`/`BTreeMap` and prove memory returns to baseline after 200 allocate/free rounds. Bytes in use are
+  counted for the Budget accounting that arrives with P2.4. An explicit `#[alloc_error_handler]` reports
+  `kernel heap exhausted` with the request and heap state and takes the panic path; the `oom` smoke scenario
+  (`oom-test` on the cmdline) proves it.
 
 ### Fixed
 - P2.6: correct the scheduler kernel test to account for the initial dispatch not charging a thread;
@@ -58,28 +79,6 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   is no IDT yet.
 - `release.yml` retries `cosign sign-blob` up to four times with backoff on transient Sigstore network errors
   (the `v0.1.1-rc.2` publish job needed a manual re-run) (#76).
-
-- P1.6: ACPI tables — `platform::acpi` parses the RSDP Limine hands over with the `acpi` crate (5.x, `alloc`),
-  reaching tables through the HHDM (a region with pages the direct map skips is mapped whole, read-only and
-  cached, into a small window via the new `paging::map_reserved`), and keeps a
-  `Summary`: table signatures, MADT local-APIC address, CPU APIC ids and I/O APICs, HPET base, and MCFG ECAM
-  regions for P1.7. Boot prints all of it; the UEFI/BIOS smoke scenarios expect the HPET line; an in-kernel test
-  checks the MADT, matches the boot CPU's APIC id against the running local APIC, and requires HPET and MCFG.
-- P1.5: local APIC + timer — the legacy 8259 PICs are remapped and masked (`arch::x86_64::pic`), the xAPIC register page is
-  mapped uncached at `paging::KERNEL_MMIO_BASE` (new `paging::map_mmio`; Limine's direct map does not cover device
-  memory) and enabled (`arch::x86_64::apic`), its timer is calibrated against PIT channel 2
-  (`arch::x86_64::pit::busy_wait_ms`) and runs periodic at 1 kHz on vector 32 with a spurious-vector handler;
-  the PICs' 16 vectors (`0xE0..=0xEF`) get no-op handlers so a spurious IRQ7/IRQ15 is swallowed; boot enables
-  interrupts, requires 90–110 ticks over a PIT-timed 100 ms (panics otherwise) and prints the success line the
-  UEFI/BIOS smoke scenarios expect;
-  an in-kernel test counts 100 ± 10 ticks over a PIT-timed 100 ms wait.
-- P1.4: kernel heap — `kernel::mm::heap` maps 1 MiB of fresh frames at `KERNEL_DYNAMIC_BASE + 256 MiB` and
-  installs `linked_list_allocator` (no default features) as the `#[global_allocator]` behind the kernel spin lock
-  with interrupts off; `alloc` is enabled in `chisel`; boot prints the heap layout; in-kernel tests exercise
-  `Vec`/`Box`/`BTreeMap` and prove memory returns to baseline after 200 allocate/free rounds. Bytes in use are
-  counted for the Budget accounting that arrives with P2.4. An explicit `#[alloc_error_handler]` reports
-  `kernel heap exhausted` with the request and heap state and takes the panic path; the `oom` smoke scenario
-  (`oom-test` on the cmdline) proves it.
 
 ## [0.1.1] - 2026-09-27
 
