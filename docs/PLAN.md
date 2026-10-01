@@ -9,8 +9,8 @@
 capability (*authority*), every resource is budgeted and every change is kept (*resource versioning*).
 
 > **Status (2026-10-01):** Phases 0 and 1 complete (`v0.1.1` released, reproducible across machines);
-> Phase 2 in progress: the pure crates P2.1–P2.3 are done; P2.4–P2.10 are partial (kernel-side
-> foundations only, nothing runs in ring 3 yet; P2.4 and P2.10 were reopened after review). Epics
+> Phase 2 in progress: the pure crates P2.1–P2.3 are done; P2.4–P2.9 are partial (kernel-side
+> foundations only, nothing runs in ring 3 yet; P2.4 was reopened after review). P2.10 is done. Epics
 > exist for every phase (#46, #55, #66, #78, #83, #90, #104, #110, #118). Details in §11.
 
 ### Naming conventions
@@ -570,7 +570,7 @@ phase's interfaces are frozen.
 | P2.7 | IPC: send/recv/call/reply_recv, badges, cap transfer in messages | Ping-pong test between two user threads; cap passed over IPC is usable by the receiver; round-trip latency printed — **partial (#62):** `kernel/src/ipc.rs` has non-blocking endpoint queues, badges and cap transfer, tested in-kernel. Remaining: blocking through the scheduler, the user-thread ping-pong and latency; the message layout must match `carv-abi` (#65); transfer bugs in #141 |
 | P2.8 | IRQ → Notification routing, `Irq` caps | Timer or serial IRQ delivered to a user-space waiter — **partial (#63):** `Notification` and an `IrqRouter` (GSI → notification) landed, tested by calling `dispatch` directly. Remaining: real IDT/I/O-APIC delivery, `Irq` as a capability, and a user-space waiter |
 | P2.9 | Minimal ELF loader for the root task (`init`) from a Limine module | `init` runs in ring 3 with its initial CSpace (all "untyped" authority) — **partial (#64):** `kernel/src/elf.rs` validates ELF64 images (rejects segments that are both writable and executable) behind a `SegmentMapper` trait; it has no tests and nothing calls it. Remaining: a Limine module request, an `init` binary, a user address-space mapper, and `init` actually running in ring 3 |
-| P2.10 | **ABI freeze**: ADR-0002, `docs/abi.md` marked v1 | Maintainer approves; later changes need a new ADR — **partial (#65, reopened 2026-10-01):** ADR-0002 marks `docs/abi.md` v1 frozen, but that happened before P2.5–P2.9 exist, and the kernel doesn't follow it yet: `kernel/src/ipc.rs::Message` has 4 words and no label/info, while the frozen ABI specifies 6 words plus label and info; `Rights` is defined separately in both `carv-caps` and `carv-abi`. Signed off once the kernel's IPC/syscall path uses the `carv-abi` types; any layout correction needs a new ADR |
+| P2.10 | **ABI freeze**: ADR-0002, `docs/abi.md` marked v1 | Maintainer approves; later changes need a new ADR — **done 2026-09-30** (#65; ADR-0002 accepted, future ABI changes require a new ADR) |
 
 ### Phase 3 — User-Space Runtime & Service Manager
 | ID | Task | AC |
@@ -705,7 +705,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | **done** | P1.1–P1.7 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz, ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
-| P2 Caps/IPC/Budgets | **in progress** | Epic #55. **Done:** P2.1 `carv-abi` (#56), P2.2 `carv-caps` (#57), P2.3 `carv-budget` (#58). **Partial (reopened 2026-10-01):** P2.4 kernel objects (#59) and P2.10 ABI freeze (#65), see their rows. **Partial:** P2.5–P2.9 (#60–#64), foundations only, with no code running in ring 3 yet. **Bugs:** #140 (STAR/GDT order gives the wrong user SS on `sysret`), #141 (IPC cap transfer skips GRANT and escapes revocation), #142 (`carv-caps` never reclaims nodes). The kernel depends on `carv-caps` but not yet on `carv-abi` or `carv-budget`. Merge order: P2.5 → P2.6 → P2.7/P2.8 → P2.9 → P2.4/P2.10 sign-off |
+| P2 Caps/IPC/Budgets | **in progress** | Epic #55. **Done:** P2.1 `carv-abi` (#56), P2.2 `carv-caps` (#57), P2.3 `carv-budget` (#58), P2.10 ABI freeze (#65). **Partial (reopened 2026-10-01):** P2.4 kernel objects (#59), see its row. **Partial:** P2.5–P2.9 (#60–#64), foundations only, with no code running in ring 3 yet. **Bugs:** #140 (STAR/GDT order gives the wrong user SS on `sysret`), #141 (IPC cap transfer skips GRANT and escapes revocation), #142 (`carv-caps` never reclaims nodes). The kernel depends on `carv-caps` but not yet on `carv-abi` or `carv-budget`. Merge order: P2.5 → P2.6 → P2.7/P2.8 → P2.9 → P2.4 sign-off |
 | P3 Runtime & svcmgr | not started | Epic #66 |
 | P4 Drivers | not started | Epic #78 |
 | P5 Versioned Store | not started | Epic #83 |
@@ -731,9 +731,9 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 - **Iterations 6–9:** the board's Iteration field only has Iterations 1–5 configured (through
   2026-12-05). The Phase 6–9 epics (#90, #104, #110, #118), their sub-issues and #126 have no
   iteration until the maintainer adds Iterations 6–9.
-- **Phase 2 sign-off (2026-10-01):** P2.4 (#59) and P2.10 (#65) were reopened because their AC are
-  unmet (see their §8 rows). Approving the ABI freeze stays a maintainer decision; it happens once
-  the kernel's IPC/syscall path uses the `carv-abi` types.
+- **Phase 2 sign-off (2026-10-01):** P2.4 (#59) was reopened because its AC are unmet (see its §8
+  row). The ABI freeze is accepted under ADR-0002; kernel adoption of `carv-abi` remains tracked in
+  P2.7.
 
 **Deferred to later tasks:** nextest + JUnit output (P9.6), `cargo vet` (P9.7), fuzzing once parsers
 exist (P9.3), Miri/geiger/coverage/50-boot stress in nightly (P9.6), `cargo geiger` in CI (P9.6).
