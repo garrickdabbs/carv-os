@@ -6,7 +6,9 @@
 //! (overflow into an unmapped guard page, non-canonical `rsp`) would fault again while pushing the
 //! exception frame and the machine would triple-fault and reset with no message.
 //!
-//! User-mode segments arrive with ring-3 support (P2.5).
+//! The ring-3 segments follow the TSS in the order `syscall`/`sysret` require: `sysretq` loads
+//! `SS = STAR[63:48] + 8` and `CS = STAR[63:48] + 16`, so user data must sit 8 bytes *below* user
+//! code (see [`super::syscall::init`]).
 
 use x86_64::VirtAddr;
 use x86_64::instructions::segmentation::{CS, DS, ES, SS, Segment};
@@ -47,8 +49,7 @@ pub struct Selectors {
     pub tss: SegmentSelector,
     /// Ring-3 code segment.
     pub user_code: SegmentSelector,
-    /// Ring-3 data segment.
-    #[allow(dead_code)]
+    /// Ring-3 data segment, 8 bytes below `user_code` as `sysretq` requires.
     pub user_data: SegmentSelector,
 }
 
@@ -68,8 +69,9 @@ pub fn init() {
         let code = gdt.append(Descriptor::kernel_code_segment());
         let data = gdt.append(Descriptor::kernel_data_segment());
         let tss_sel = gdt.append(Descriptor::tss_segment(TSS.get()));
-        let user_code = gdt.append(Descriptor::user_code_segment());
+        // User data first: `sysretq` derives SS as STAR base + 8 and CS as base + 16.
         let user_data = gdt.append(Descriptor::user_data_segment());
+        let user_code = gdt.append(Descriptor::user_code_segment());
         *SELECTORS.get_mut() = Selectors {
             code,
             data,

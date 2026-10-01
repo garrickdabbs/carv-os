@@ -3,11 +3,10 @@
 //! The MSR setup is intentionally separate from dispatch: P2.7 will add capability
 //! lookup and message decoding without changing the architectural entry contract.
 
-use x86_64::registers::model_specific::Msr;
+use x86_64::registers::model_specific::{Msr, Star};
 
 use super::gdt;
 
-const IA32_STAR: u32 = 0xC000_0081;
 const IA32_LSTAR: u32 = 0xC000_0082;
 const IA32_FMASK: u32 = 0xC000_0084;
 const RFLAGS_IF: u64 = 1 << 9;
@@ -61,14 +60,19 @@ impl UserContext {
 
 /// Programs STAR/LSTAR/SFMASK. Call once after the GDT and IDT are loaded.
 ///
+/// STAR is written through [`Star::write`], which rejects a GDT whose selectors `syscall` and
+/// `sysretq` would derive wrongly (user data must be 8 bytes below user code, kernel data 8 bytes
+/// above kernel code). A bad layout panics at boot rather than faulting on the first return to
+/// ring 3.
+///
 /// The entry stub is a safe placeholder until the syscall dispatcher and IPC ABI land.
 pub fn init() {
     let sel = gdt::selectors();
-    let star = ((sel.user_code.0 as u64 - 16) << 48) | ((sel.code.0 as u64) << 32);
+    Star::write(sel.user_code, sel.user_data, sel.code, sel.data)
+        .expect("GDT layout is incompatible with syscall/sysret");
     // SAFETY: these MSRs are architectural syscall configuration registers and are written once
     // during early boot while interrupts are disabled.
     unsafe {
-        Msr::new(IA32_STAR).write(star);
         Msr::new(IA32_LSTAR).write(syscall_entry as *const () as usize as u64);
         Msr::new(IA32_FMASK).write(RFLAGS_IF | RFLAGS_DF);
     }
