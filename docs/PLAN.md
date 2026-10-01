@@ -364,12 +364,11 @@ infrastructure, so it is delivered as Phase 0 tasks (P0.5, P0.7, P0.8) and harde
   `kind:task|bug|adr|security`. One GitHub Issue per task ID, mirrored on a Project board with
   columns *Backlog → Ready → In progress → In review → Done*. The §11 status table summarizes the board.
 - **Board mechanics (set up 2026-09-27):** the *CarvOS Prototype* user project (#3) with Status
-  *Backlog / Ready / In progress / In review / Done*, 14-day iterations (Iteration 1 from 2026-09-26;
-  Phase N's tasks sit in Iteration N, when that iteration exists — only Iterations 1–5 are
-  configured as of 2026-10-01 (through 2026-12-05), so Phase 6's epic (#90) is already Backlog with
-  no iteration, and Phase 7–9 epics/tasks are Backlog with no iteration too, until Iterations 6–9
-  are added). Phase epics #46 (P1), #55 (P2), #66 (P3), #78 (P4), #83 (P5), #90 (P6), #104 (P7), #110
-  (P8) and #118 (P9) hold one sub-issue per task ID with the AC copied from §8; the epic's sub-issue
+  *Backlog / Ready / In progress / In review / Done*. Since 2026-10-01 there are no iterations or
+  Priority values on open items: the *Prioritized backlog* view is one list in **phase → task
+  order** (each epic, then its tasks by ID, with related bugs and follow-ups next to their task),
+  and the maintainer works top-down. New issues go into that order by hand. Phase epics #46 (P1),
+  #55 (P2), #66 (P3), #78 (P4), #83 (P5), #90 (P6), #104 (P7), #110 (P8) and #118 (P9) hold one sub-issue per task ID with the AC copied from §8; the epic's sub-issue
   counter is the phase progress. Built-in project workflows do the automatic moves: auto-add on creation,
   item closed → Done, PR merged → Done, PR linked to issue, auto-close issue when set to Done,
   auto-add sub-issues. Agents set *In progress* and *In review* with `gh` and link PRs with
@@ -712,10 +711,10 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | P3 Runtime & svcmgr | not started | Epic #66 |
 | P4 Drivers | not started | Epic #78 |
 | P5 Versioned Store | not started | Epic #83 |
-| P6 Shell & Coreutils | not started | Epic #90; no iteration assigned yet — only Iterations 1–5 exist |
-| P7 Users & Auth | not started | Epic #104 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist |
-| P8 Networking | not started | Epic #110 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist |
-| P9 Hardening | partial | Epic #118 (created 2026-09-29); no iteration assigned yet — only Iterations 1–5 exist. Landed early: CodeQL + Scorecard workflows (P9.7, Phase 0), reproducible builds across machines (P9.6 part, #42, 2026-09-27). P9.8 agent credentials (#144) added 2026-10-01, moved from P0.7. Rest not started |
+| P6 Shell & Coreutils | not started | Epic #90 |
+| P7 Users & Auth | not started | Epic #104 (created 2026-09-29) |
+| P8 Networking | not started | Epic #110 (created 2026-09-29) |
+| P9 Hardening | partial | Epic #118 (created 2026-09-29). Landed early: CodeQL + Scorecard workflows (P9.7, Phase 0), reproducible builds across machines (P9.6 part, #42, 2026-09-27). P9.8 agent credentials (#144) added 2026-10-01, moved from P0.7. Rest not started |
 
 (Better: mirror these as GitHub Issues with a Project board; one issue per task ID, labeled by phase.)
 
@@ -730,9 +729,6 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 - **`v*` tag ruleset:** no ruleset protects tag creation/deletion today (only the `main` branch
   ruleset exists); §7.5's release flow and §12's risk mitigation assumed one. Agents never create or
   edit rulesets, so adding a tag ruleset is a maintainer action.
-- **Iterations 6–9:** the board's Iteration field only has Iterations 1–5 configured (through
-  2026-12-05). The Phase 6–9 epics (#90, #104, #110, #118), their sub-issues and #126 have no
-  iteration until the maintainer adds Iterations 6–9.
 - **Phase 2 sign-off (2026-10-01):** P2.4 (#59) was reopened because its AC are unmet (see its §8
   row). The ABI freeze is accepted under ADR-0002; kernel adoption of `carv-abi` remains tracked in
   P2.7.
