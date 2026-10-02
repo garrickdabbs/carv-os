@@ -114,6 +114,32 @@ fn gdt_selectors_are_live() {
 }
 
 #[test_case]
+fn star_matches_gdt_layout_for_sysret() {
+    use x86_64::registers::model_specific::Star;
+    let sel = crate::arch::x86_64::gdt::selectors();
+    // `sysretq` loads SS from STAR base + 8 and CS from base + 16 (#140).
+    assert_eq!(sel.user_data.0 + 8, sel.user_code.0);
+    assert_eq!(sel.code.0 + 8, sel.data.0);
+    let (sysret_cs, sysret_ss, syscall_cs, syscall_ss) = Star::read();
+    assert_eq!(sysret_cs, sel.user_code);
+    assert_eq!(sysret_ss, sel.user_data);
+    assert_eq!(syscall_cs, sel.code);
+    assert_eq!(syscall_ss, sel.data);
+}
+
+#[test_case]
+fn syscall_entry_msrs_are_programmed() {
+    use x86_64::registers::model_specific::{LStar, SFMask};
+    use x86_64::registers::rflags::RFlags;
+    // LSTAR must point into the kernel's higher half; SFMASK must clear IF and DF on entry.
+    assert!(LStar::read().as_u64() >= 0xffff_8000_0000_0000);
+    assert_eq!(
+        SFMask::read(),
+        RFlags::INTERRUPT_FLAG | RFlags::DIRECTION_FLAG
+    );
+}
+
+#[test_case]
 fn user_context_starts_with_safe_flags() {
     let context = crate::arch::x86_64::syscall::UserContext::new(0x4000, 0x8000);
     assert_eq!(context.rip, 0x4000);
