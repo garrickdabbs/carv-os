@@ -19,8 +19,7 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - P2.7/P2.8 (foundations only, exercised by in-kernel tests rather than by user threads):
   non-blocking endpoint send/recv/call/reply queues, badge-bearing messages with capability
   transfer, notification signal/wait words, and a GSI-to-notification router that is not yet
-  connected to real interrupt delivery. The kernel's message type (4 inline words) does not yet
-  match the `carv-abi` layout (6 words), and capability transfer has a known bug (#141).
+  connected to real interrupt delivery. Capability transfer has a known bug (#141).
 - P2.1: added the `carv-abi` crate with syscall numbers, IPC message layout, error codes, and
   capability-rights bits, documented in `docs/abi.md`.
 - P2.4 (partial, #59 reopened): kernel object registry with budget-charged Thread, AddressSpace,
@@ -81,6 +80,14 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   parsed (20bcd7d, #100).
 
 ### Changed
+- P2.7: the kernel now depends on `carv-abi` and takes its IPC message limits from it
+  (`MESSAGE_WORDS` = 6 inline words, `MESSAGE_CAPS` = 4 capabilities) instead of its own 4-word
+  constant, so the kernel queues accept exactly what the frozen ABI v1 allows; an in-kernel test
+  checks the limits. Conversion to the `repr(C)` wire `Message` happens with the syscall glue.
+- Docs now match the tree: PLAN.md §4 marks directories and crates that do not exist yet as
+  planned and lists `carv-frames`; CLAUDE.md no longer says `cargo xtask build` builds services
+  and userland, marks `cargo xtask gdb` as not implemented, and notes that the kernel heap does not
+  charge a Budget yet (P2.4).
 - Kernel doc-comment cleanup, no behaviour change: `force_stack_overflow`'s doc comment (which had
   been misattached to `force_oom`) now sits on the right function; the module doc no longer opens
   with the stale "P1.1 state" wording and now describes the actual order (banner right after

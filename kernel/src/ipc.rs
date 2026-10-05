@@ -13,10 +13,10 @@ use carv_caps::{CSpace, CSpaceError, Capability};
 
 use crate::sync::SpinLock;
 
-/// Maximum number of machine words carried inline by one IPC message.
-pub const INLINE_WORDS: usize = 4;
-/// Maximum number of capabilities carried by one IPC message.
-pub const TRANSFERRED_CAPS: usize = 4;
+/// Maximum number of machine words carried inline by one IPC message (ABI v1 limit).
+pub const INLINE_WORDS: usize = carv_abi::MESSAGE_WORDS;
+/// Maximum number of capabilities carried by one IPC message (ABI v1 limit).
+pub const TRANSFERRED_CAPS: usize = carv_abi::MESSAGE_CAPS;
 
 /// A small, register-sized IPC payload and optional capability transfer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,6 +296,15 @@ mod tests {
         endpoint.reply(token, Message::from_words(&[0xBEEF]).unwrap());
         assert_eq!(endpoint.take_reply(token).unwrap().words[0], 0xBEEF);
         assert!(endpoint.take_reply(token).is_none());
+    }
+
+    #[test_case]
+    fn message_limits_match_abi_v1() {
+        let full = [0u64; carv_abi::MESSAGE_WORDS];
+        assert!(Message::from_words(&full).is_some());
+        let over = [0u64; carv_abi::MESSAGE_WORDS + 1];
+        assert!(Message::from_words(&over).is_none());
+        assert_eq!(Message::empty().caps.len(), carv_abi::MESSAGE_CAPS);
     }
 
     #[test_case]
