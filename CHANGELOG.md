@@ -8,16 +8,25 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ### Added
 - P2.9/P2.10: allocation-free `no_std` ELF64 validation and segment-mapping abstractions for a
-  Limine root-task module, plus ADR-0002 and the frozen ABI v1 contract. Ring-3 address-space
-  integration remains P2.5 work.
-- P2.5/P2.6: kernel ring-3 selector and user-context abstractions, syscall MSR setup
-  (STAR/LSTAR/SFMASK), and a timer-driven budget-aware round-robin scheduler.
-- P2.7/P2.8: kernel IPC foundations for endpoint send/recv/call/reply, badge-bearing messages with
-  capability transfer, notification signal/wait words, and IRQ-to-notification routing.
+  Limine root-task module (untested and not yet called: there is no module request or `init`
+  binary), plus ADR-0002 and the frozen ABI v1 contract. Ring-3 address-space integration remains
+  P2.5 work.
+- P2.5/P2.6 (foundations only, nothing runs in ring 3 yet): kernel ring-3 selector and
+  user-context abstractions, syscall MSR setup (STAR/LSTAR/SFMASK) and CR4 SMEP/SMAP. The syscall
+  entry point only halts, EFER.SCE is not set, and there is no context switch. A budget-aware
+  round-robin scheduler *model* is ticked by the LAPIC timer, but it holds no threads at runtime,
+  never switches, and does its own refill math instead of using `carv-budget`.
+- P2.7/P2.8 (foundations only, exercised by in-kernel tests rather than by user threads):
+  non-blocking endpoint send/recv/call/reply queues, badge-bearing messages with capability
+  transfer, notification signal/wait words, and a GSI-to-notification router that is not yet
+  connected to real interrupt delivery. The kernel's message type (4 inline words) does not yet
+  match the `carv-abi` layout (6 words), and capability transfer has a known bug (#141).
 - P2.1: added the `carv-abi` crate with syscall numbers, IPC message layout, error codes, and
   capability-rights bits, documented in `docs/abi.md`.
-- P2.4: kernel object registry with budget-charged Thread, AddressSpace, Frame, Endpoint,
-  Notification, Budget, and Reply objects, plus ABI-independent `invoke` dispatch abstractions.
+- P2.4 (partial, #59 reopened): kernel object registry with budget-charged Thread, AddressSpace,
+  Frame, Endpoint, Notification, Budget, and Reply objects, plus ABI-independent `invoke` dispatch
+  abstractions. Objects are type tags without state, cannot yet be created via `invoke`, and the
+  registry is not used by the rest of the kernel.
 - P2.2: `carv-caps`, a pure `no_std` capability-space library with fixed slots, attenuating copy and
   badge minting, derivation tracking, descendant revocation, and proptest coverage.
 - P2.3: `carv-budget`, a pure host-testable `no_std` crate for CPU period refills, memory charges,
