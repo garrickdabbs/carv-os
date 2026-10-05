@@ -7,6 +7,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Added
+- P2.9: in-kernel tests for `kernel/src/elf.rs` (#64): a valid image is accepted and non-load
+  headers skipped; truncated, non-x86-64 and out-of-bounds program-header tables, W+X, overrun,
+  wrapping, misaligned and overlapping segments, an entry point outside an executable segment and
+  too many segments are rejected; `map_into` maps page-rounded ranges, copies exact file bytes and
+  reports mapper failures. Nothing calls the loader at boot yet.
 - P2.9/P2.10: allocation-free `no_std` ELF64 validation and segment-mapping abstractions for a
   Limine root-task module (untested and not yet called: there is no module request or `init`
   binary), plus ADR-0002 and the frozen ABI v1 contract. Ring-3 address-space integration remains
@@ -63,6 +68,18 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   (`oom-test` on the cmdline) proves it.
 
 ### Fixed
+- `carv-caps` reclaims derivation nodes (#142): deleting a capability splices its node out of the
+  tree and hands its children to its parent (so revoking an ancestor still reaches them), revoked
+  nodes are freed, and freed nodes are reused. A CSpace never holds more nodes than slots
+  (`CSpace::node_count`, storage reserved in `CSpace::new`), and `revoke` clears slots through a
+  node-to-slot link instead of scanning every slot per descendant. Tests: 10 000 copy/delete cycles
+  and a 10 000-link deleted chain stay bounded, and a proptest checks revocation through deleted
+  links against a model.
+- P2.6 (#61): the scheduler model keeps each thread's CPU allowance in a `carv_budget::Budget`
+  instead of its own copy of the refill math (the kernel now depends on `carv-budget`);
+  `Thread::new` returns the budget error for a zero period or an allowance above its period, and
+  `Thread::with_budget` accepts a carved-out budget. A new in-kernel test checks 20%/50% threads
+  are throttled once their allowances are spent and refilled on the period boundary.
 - P2.5 (#140): the GDT now places user data 8 bytes below user code, so `sysretq` loads SS from the
   user data descriptor instead of the upper half of the TSS descriptor; STAR is programmed with
   `Star::write`, which panics at boot on an incompatible layout, and an in-kernel test checks that

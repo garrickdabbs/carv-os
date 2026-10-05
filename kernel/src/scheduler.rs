@@ -1,6 +1,10 @@
 //! Budget-aware, timer-driven round-robin scheduling.
+//!
+//! CPU refill and charging come from [`carv_budget::Budget`]; this module only picks threads.
 
 use alloc::vec::Vec;
+
+use carv_budget::{Budget, BudgetError};
 
 use crate::sync::SpinLock;
 
@@ -11,43 +15,39 @@ static SCHEDULER: SpinLock<Scheduler> = SpinLock::new(Scheduler::new());
 pub struct Thread {
     /// Stable identifier supplied by the object layer.
     pub id: u64,
-    budget_ns: u64,
-    period_ns: u64,
-    remaining_ns: u64,
-    period_start_ns: u64,
+    budget: Budget,
     runnable: bool,
 }
 
 impl Thread {
-    /// Creates a runnable thread with a full budget.
+    /// Creates a runnable thread with a full CPU budget of `budget_ns` every `period_ns`.
+    ///
+    /// # Errors
+    /// Returns the [`BudgetError`] from [`Budget::new`] for a zero period or a budget that
+    /// exceeds its period.
     #[allow(dead_code)]
-    pub fn new(id: u64, budget_ns: u64, period_ns: u64, now_ns: u64) -> Self {
-        assert!(period_ns != 0 && budget_ns <= period_ns);
+    pub fn new(id: u64, budget_ns: u64, period_ns: u64, now_ns: u64) -> Result<Self, BudgetError> {
+        Ok(Self::with_budget(
+            id,
+            Budget::new(budget_ns, period_ns, 0, now_ns)?,
+        ))
+    }
+
+    /// Creates a runnable thread that runs on `budget`, e.g. one carved out of a parent budget.
+    #[allow(dead_code)]
+    pub fn with_budget(id: u64, budget: Budget) -> Self {
         Self {
             id,
-            budget_ns,
-            period_ns,
-            remaining_ns: budget_ns,
-            period_start_ns: now_ns,
+            budget,
             runnable: true,
         }
     }
 
-    fn refill(&mut self, now_ns: u64) {
-        if now_ns >= self.period_start_ns && now_ns - self.period_start_ns >= self.period_ns {
-            self.period_start_ns = now_ns - (now_ns - self.period_start_ns) % self.period_ns;
-            self.remaining_ns = self.budget_ns;
-        }
-    }
-
-    fn charge(&mut self, elapsed_ns: u64, now_ns: u64) -> bool {
-        self.refill(now_ns);
-        if elapsed_ns > self.remaining_ns {
-            self.remaining_ns = 0;
-            false
-        } else {
-            self.remaining_ns -= elapsed_ns;
-            true
+    /// Charges `elapsed_ns` of CPU time; an overrun drains the rest of the period's allowance.
+    fn charge(&mut self, elapsed_ns: u64, now_ns: u64) {
+        if !self.budget.charge_cpu(elapsed_ns, now_ns) {
+            let remaining = self.budget.cpu_remaining_ns();
+            self.budget.charge_cpu(remaining, now_ns);
         }
     }
 }
@@ -89,8 +89,8 @@ impl Scheduler {
                 .current
                 .map_or(offset - 1, |c| (c + offset) % self.threads.len());
             let t = &mut self.threads[i];
-            t.refill(self.now_ns);
-            if t.runnable && t.remaining_ns != 0 {
+            t.budget.refill(self.now_ns);
+            if t.runnable && t.budget.cpu_remaining_ns() != 0 {
                 self.current = Some(i);
                 return Some(t.id);
             }
