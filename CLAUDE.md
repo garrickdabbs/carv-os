@@ -4,14 +4,14 @@ CarvOS (CARV: Capability Authority & Resource Versioning) is a hobby capability-
 Read it before starting any task.
 
 ## Commands
-- `cargo xtask build` — build kernel, services, userland
+- `cargo xtask build` — build the `chisel` kernel (services and userland are added to the build when they exist, Phase 3+)
 - `cargo xtask image [--release]` — build `target/carv-os.iso` (UEFI + BIOS) and `target/data.img`; `--release` strips debuginfo from the ISO's kernel copy (reproducible builds, #29)
 - `cargo xtask run [--release] [--bios] [--debug] [--timeout SECS]` — boot in QEMU (serial on stdio); `--debug` logs int/reset to `target/qemu.log`; always pass `--timeout` in scripts
 - `cargo xtask smoke [--release] [--timeout SECS]` — boot the UEFI, BIOS, panic, double-fault, page-fault, stack-overflow and out-of-memory scenarios in QEMU and check serial output; logs in `target/smoke/`
 - `cargo xtask docs-gate [--base REF]` — fail (exit 2) if code changed without documentation; CI runs it on every PR from the base branch's xtask. Run it before opening a PR. (Optional, local only: a Claude Code Stop hook in your own `.claude/settings.local.json` — `.claude/` is gitignored and never committed, because a shared settings file would run shell commands on every contributor's machine.)
 - `cargo xtask perf [--runs N]` — size and boot-time budgets (release build, median of N boots); CI fails a PR that exceeds them, so if you grow the kernel deliberately, raise the budget constants in `xtask` in the same PR and say why
 - `cargo xtask test [--host] [--kernel] [--integration]` — host unit tests + in-kernel `#[test_case]` tests booted in QEMU (`isa-debug-exit`) + boot smoke. **Must pass before any PR.** Also run `cargo xtask perf`, clippy (host: `--workspace --exclude chisel`; kernel: `-p chisel --target x86_64-unknown-none`), fmt, `cargo deny check`.
-- `cargo xtask gdb` — boot paused with gdb stub attached
+- `cargo xtask gdb` — *planned, not implemented yet*: boot paused with gdb stub attached
 
 ## Rules
 - One task ID per branch/PR (`p2.7-ipc`). Stay inside the directories your task names.
@@ -20,7 +20,7 @@ Read it before starting any task.
 - Every `unsafe` block needs a `// SAFETY:` comment explaining why it is sound (enforced: `#![deny(clippy::undocumented_unsafe_blocks)]` in every crate root). Every public item needs a doc comment (`#![deny(missing_docs)]`).
 - No changes to `docs/abi.md` or `crates/carv-abi` after the ABI freeze (P2.10) without a new ADR in `docs/adr/`.
 - No ambient authority: never add a global path namespace, a "root bypass", or a syscall that skips capability checks.
-- Every allocation path must charge a Budget.
+- Every allocation path must charge a Budget. (Known gap: the kernel heap only counts bytes in use and kernel objects charge a stand-alone budget; wiring both to `carv-budget` is P2.4 work.)
 - Every QEMU test run has a timeout; a hang counts as a failure. New kernel behaviour gets a `#[test_case]` in `kernel/src/test.rs` (or a `test` module next to the code); tests that need a fresh boot or a panic go in the `xtask` smoke scenarios.
 - Don't mark a task done without pasting `cargo xtask test` output. If blocked on a design question, write it up and stop.
 - Update the status table in `docs/PLAN.md` §11 when you open a PR.
