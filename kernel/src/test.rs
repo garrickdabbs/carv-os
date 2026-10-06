@@ -175,7 +175,10 @@ fn kernel_stacks_are_mapped_with_a_guard_page_and_recycled() {
     );
     let bottom = stack.bottom();
     drop(stack);
-    assert!(paging::translate(VirtAddr::new(bottom)).is_none(), "unmapped on drop");
+    assert!(
+        paging::translate(VirtAddr::new(bottom)).is_none(),
+        "unmapped on drop"
+    );
     let again = KernelStack::new().expect("kernel stack");
     assert_eq!(again.bottom(), bottom, "slot recycled");
 }
@@ -192,19 +195,34 @@ fn user_address_spaces_enforce_wx_and_user_bounds() {
         space.map_zeroed(carv_abi::USER_TOP, true, false),
         Err(MapUserError::BadAddress)
     );
-    assert_eq!(space.map_zeroed(0x40_0123, true, false), Err(MapUserError::BadAddress));
+    assert_eq!(
+        space.map_zeroed(0x40_0123, true, false),
+        Err(MapUserError::BadAddress)
+    );
     space.map_zeroed(0x40_0000, false, true).unwrap();
     space.map_zeroed(0x50_0000, true, false).unwrap();
     assert_eq!(
         space.map_zeroed(0x50_0000, true, false),
         Err(MapUserError::AlreadyMapped)
     );
-    assert!(space.write(0x40_0000, &[0x90], Access::Kernel), "loader writes code");
-    assert!(!space.write(0x40_0000, &[0x90], Access::UserWrite), "user can't write code");
+    assert!(
+        space.write(0x40_0000, &[0x90], Access::Kernel),
+        "loader writes code"
+    );
+    assert!(
+        !space.write(0x40_0000, &[0x90], Access::UserWrite),
+        "user can't write code"
+    );
     assert!(space.write(0x50_0ff8, &7u64.to_le_bytes(), Access::UserWrite));
     assert_eq!(space.read_u64(0x50_0ff8), Some(7));
-    assert!(!space.accessible(0x50_0ff8, 16, Access::UserRead), "crosses into unmapped page");
-    assert!(!space.accessible(0xffff_8000_0000_0000, 8, Access::UserRead), "kernel half");
+    assert!(
+        !space.accessible(0x50_0ff8, 16, Access::UserRead),
+        "crosses into unmapped page"
+    );
+    assert!(
+        !space.accessible(0xffff_8000_0000_0000, 8, Access::UserRead),
+        "kernel half"
+    );
     assert_eq!(space.mapped_pages(), 2);
 }
 
@@ -375,6 +393,36 @@ fn heap_vec_box_and_btreemap_work() {
         ["one", "two", "three"]
     );
     assert_eq!(m.get(&2), Some(&"two"));
+}
+
+#[test_case]
+fn heap_allocations_charge_the_heap_budget() {
+    use crate::mm::heap;
+    use alloc::vec::Vec;
+    let before = heap::stats();
+    assert_eq!(
+        before.limit,
+        heap::HEAP_SIZE,
+        "the heap budget covers the whole heap"
+    );
+    let block: Vec<u8> = Vec::with_capacity(1000);
+    assert_eq!(
+        heap::stats().in_use,
+        before.in_use + 1000,
+        "allocation charged"
+    );
+    drop(block);
+    assert_eq!(heap::stats().in_use, before.in_use, "free credited back");
+    let mut too_big: Vec<u8> = Vec::new();
+    assert!(
+        too_big.try_reserve_exact(heap::HEAP_SIZE + 1).is_err(),
+        "an allocation beyond the heap budget is refused"
+    );
+    assert_eq!(
+        heap::stats().in_use,
+        before.in_use,
+        "a refused allocation charges nothing"
+    );
 }
 
 #[test_case]

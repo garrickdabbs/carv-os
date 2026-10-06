@@ -4,7 +4,7 @@ CarvOS (CARV: Capability Authority & Resource Versioning) is a hobby capability-
 Read it before starting any task.
 
 ## Commands
-- `cargo xtask build` — build the `chisel` kernel (services and userland are added to the build when they exist, Phase 3+)
+- `cargo xtask build` — build the `chisel` kernel and the ring-3 root task `userland/init` (into `target/userland/`; shipped as the Limine module `boot():/boot/init`); services are added in Phase 3+
 - `cargo xtask image [--release]` — build `target/carv-os.iso` (UEFI + BIOS) and `target/data.img`; `--release` strips debuginfo from the ISO's kernel copy (reproducible builds, #29)
 - `cargo xtask run [--release] [--bios] [--debug] [--timeout SECS]` — boot in QEMU (serial on stdio); `--debug` logs int/reset to `target/qemu.log`; always pass `--timeout` in scripts
 - `cargo xtask smoke [--release] [--timeout SECS]` — boot the UEFI, BIOS, panic, double-fault, page-fault, stack-overflow and out-of-memory scenarios in QEMU and check serial output; logs in `target/smoke/`
@@ -20,7 +20,7 @@ Read it before starting any task.
 - Every `unsafe` block needs a `// SAFETY:` comment explaining why it is sound (enforced: `#![deny(clippy::undocumented_unsafe_blocks)]` in every crate root). Every public item needs a doc comment (`#![deny(missing_docs)]`).
 - No changes to `docs/abi.md` or `crates/carv-abi` after the ABI freeze (P2.10) without a new ADR in `docs/adr/`.
 - No ambient authority: never add a global path namespace, a "root bypass", or a syscall that skips capability checks.
-- Every allocation path must charge a Budget. (Known gap: the kernel heap only counts bytes in use and kernel objects charge a stand-alone budget; wiring both to `carv-budget` is P2.4 work.)
+- Every allocation path must charge a Budget: kernel objects are charged to the creating Budget capability through the object registry (`kernel/src/objects.rs`), and the kernel heap charges its own `carv-budget` Budget on every allocation.
 - Every QEMU test run has a timeout; a hang counts as a failure. New kernel behaviour gets a `#[test_case]` in `kernel/src/test.rs` (or a `test` module next to the code); tests that need a fresh boot or a panic go in the `xtask` smoke scenarios.
 - Don't mark a task done without pasting `cargo xtask test` output. If blocked on a design question, write it up and stop.
 - Update the status table in `docs/PLAN.md` §11 when you open a PR.

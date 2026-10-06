@@ -320,9 +320,12 @@ extern "C" fn kmain() -> ! {
 /// Loads the `boot/init` module into a fresh address space and starts it in ring 3 on the root
 /// budget, with the CSpace layout of `carv_abi::init` (P2.9). Halts if there is no init.
 fn start_init() {
-    let module = MODULES
-        .response()
-        .and_then(|r| r.modules().iter().find(|m| m.path().ends_with("/init")).copied());
+    let module = MODULES.response().and_then(|r| {
+        r.modules()
+            .iter()
+            .find(|m| m.path().ends_with("/init"))
+            .copied()
+    });
     let Some(module) = module else {
         kprintln!("chisel: no init module; nothing to run; halting");
         halt_forever()

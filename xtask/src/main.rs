@@ -795,7 +795,9 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
             "acpi: HPET at 0x",
             "virtio-blk",
             "virtio-net",
-            "halting",
+            "init: hello from ring 3",
+            "init: created an endpoint via invoke",
+            "init: idle",
         ],
     },
     Scenario {
@@ -809,7 +811,9 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
             "acpi: HPET at 0x",
             "virtio-blk",
             "virtio-net",
-            "halting",
+            "init: hello from ring 3",
+            "init: created an endpoint via invoke",
+            "init: idle",
         ],
     },
     Scenario {
@@ -1297,8 +1301,10 @@ const ISO_BYTES_MAX: u64 = 16 * 1024 * 1024;
 /// Boot-to-banner budget (QEMU spawn to `CarvOS chisel v` on serial), enforced only under KVM
 /// because TCG timings say more about the host than the kernel. OVMF alone costs ~2 s.
 const BOOT_TO_BANNER_MAX: Duration = Duration::from_secs(8);
-/// Kernel work between the banner and the final "halting" line, enforced under KVM.
+/// Kernel work between the banner and `init` reporting idle, enforced under KVM.
 const BANNER_TO_HALT_MAX: Duration = Duration::from_secs(2);
+/// Serial line that marks the end of boot: the ring-3 `init` task has started and gone idle.
+const BOOT_DONE_MARKER: &str = "init: idle";
 
 /// Loaded-segment sizes from an ELF64 file's program headers.
 struct LoadSizes {
@@ -1356,7 +1362,7 @@ fn elf64_load_sizes(bytes: &[u8]) -> Result<LoadSizes, String> {
     Ok(sizes)
 }
 
-/// Boot timing of one QEMU run: when the banner appeared and when the kernel reached "halting".
+/// Boot timing of one QEMU run: when the banner appeared and when `init` reported idle.
 struct BootTiming {
     banner_after: Duration,
     halt_after_banner: Option<Duration>,
@@ -1413,7 +1419,7 @@ fn perf(args: &[String]) -> Result<(), String> {
             &mut cmd,
             BOOT_TO_BANNER_MAX * 4,
             "CarvOS chisel v",
-            "halting",
+            BOOT_DONE_MARKER,
         )?;
         let Some(t) = timing else {
             return Err(format!(

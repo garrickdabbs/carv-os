@@ -12,3 +12,4 @@ Format (Michael Nygard's): **Context** — what forces the decision; **Decision*
 |---|---|---|
 | [0001](0001-microkernel-rust-x86_64.md) | Capability microkernel in Rust for x86_64, booted by Limine, tested in QEMU | Accepted |
 | [0002](0002-abi-v1-and-root-elf.md) | Version-1 syscall/IPC ABI and root-task ELF contract | Accepted |
+| [0003](0003-abi-v1-addendum-invoke-and-root-cspace.md) | ABI v1 addendum: syscall results, `invoke` methods, IPC capability transfer, root CSpace | Proposed |

@@ -217,7 +217,8 @@ pub mod method {
     /// the address space's budget. Needs `WRITE`.
     pub const ADDRESS_SPACE_MAP: u64 = 5;
     /// IRQ control: creates an [`super::ObjectType::Irq`] capability for global system interrupt
-    /// `a0` in the caller's empty slot `a1`. Needs `WRITE`.
+    /// `a0` in the caller's empty slot `a1`, charged to the calling thread's budget. Needs
+    /// `WRITE`.
     pub const IRQ_CONTROL_GET: u64 = 6;
     /// Irq: delivers the interrupt to the notification in slot `a0` (which needs `WRITE`) and
     /// unmasks the line. Needs `WRITE`.

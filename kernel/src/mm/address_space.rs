@@ -93,7 +93,7 @@ impl AddressSpace {
     /// Maps a fresh zeroed frame at `va` (page aligned, below `USER_TOP`), user-accessible,
     /// writable and/or executable as asked (never both).
     pub fn map_zeroed(&mut self, va: u64, write: bool, exec: bool) -> Result<(), MapUserError> {
-        if va % PAGE != 0 || va >= carv_abi::USER_TOP {
+        if !va.is_multiple_of(PAGE) || va >= carv_abi::USER_TOP {
             return Err(MapUserError::BadAddress);
         }
         if write && exec {
@@ -222,11 +222,7 @@ impl AddressSpace {
             // SAFETY: `phys..phys+chunk` lies in one frame owned by this address space, reached
             // through the HHDM; `bytes` is a separate kernel buffer.
             unsafe {
-                core::ptr::copy_nonoverlapping(
-                    bytes[done..].as_ptr(),
-                    hhdm::<u8>(phys),
-                    chunk,
-                );
+                core::ptr::copy_nonoverlapping(bytes[done..].as_ptr(), hhdm::<u8>(phys), chunk);
             }
             done += chunk;
         }

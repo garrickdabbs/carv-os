@@ -235,17 +235,13 @@ fn deliver(
             break;
         };
         let source = usize::try_from(message.caps[i]).unwrap_or(usize::MAX);
-        let step = k
-            .caps
-            .get(fs, source)
-            .map_err(caps_error)
-            .and_then(|c| {
-                let dest = k.caps.first_empty_slot(ts).ok_or(Error::InvalidOperation)?;
-                k.caps
-                    .transfer((fs, source), (ts, dest), c.rights())
-                    .map_err(caps_error)?;
-                Ok(dest)
-            });
+        let step = k.caps.get(fs, source).map_err(caps_error).and_then(|c| {
+            let dest = k.caps.first_empty_slot(ts).ok_or(Error::InvalidOperation)?;
+            k.caps
+                .transfer((fs, source), (ts, dest), c.rights())
+                .map_err(caps_error)?;
+            Ok(dest)
+        });
         match step {
             Ok(dest) => {
                 installed.push(dest);
@@ -456,8 +452,7 @@ pub fn destroy_object(k: &mut Kernel, id: ObjectId) -> Result<(), Error> {
             return Err(ObjectError::InUse.into());
         }
         Object::AddressSpace(_)
-            if k
-                .sched
+            if k.sched
                 .threads()
                 .any(|t| t.space == Some(id) && t.state != State::Dead) =>
         {
@@ -550,8 +545,7 @@ fn invoke(k: &mut Kernel, slot: u64, m: u64, a: [u64; 4]) -> Step {
         method::DESTROY => {
             let c = cap(k, slot, Rights::WRITE)?;
             destroy_object(k, c.object())?;
-            if k
-                .sched
+            if k.sched
                 .thread(k.sched.current())
                 .is_some_and(|t| t.state == State::Dead)
             {
@@ -711,7 +705,11 @@ pub struct Process {
 /// Creates an empty process paid for by `budget`, with the initial CSpace layout of
 /// [`carv_abi::init`]: the budget, its own thread and address space, and (if `irq_control`)
 /// the IRQ-control capability.
-pub fn create_process(k: &mut Kernel, budget: ObjectId, irq_control: bool) -> Result<Process, Error> {
+pub fn create_process(
+    k: &mut Kernel,
+    budget: ObjectId,
+    irq_control: bool,
+) -> Result<Process, Error> {
     let space = k.objects.create(ObjectType::AddressSpace, budget)?;
     let cspace = k.caps.create_space(init::CSPACE_SLOTS);
     let thread = match create_thread(k, budget, cspace) {

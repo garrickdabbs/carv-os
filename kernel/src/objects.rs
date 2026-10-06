@@ -292,10 +292,7 @@ impl ObjectRegistry {
             ObjectType::Endpoint => Some(Object::Endpoint(Endpoint::new())),
             ObjectType::Notification => Some(Object::Notification(Notification::new())),
             ObjectType::Reply => Some(Object::Reply),
-            ObjectType::Thread
-            | ObjectType::Budget
-            | ObjectType::Irq
-            | ObjectType::IrqControl => {
+            ObjectType::Thread | ObjectType::Budget | ObjectType::Irq | ObjectType::IrqControl => {
                 self.credit(payer, bytes);
                 return Err(ObjectError::InvalidMethod);
             }
@@ -440,7 +437,10 @@ mod tests {
             objects.push(id);
         }
         let used: u64 = types.iter().map(|t| object_bytes(*t)).sum();
-        assert_eq!(registry.budget_mut(budget).unwrap().memory_used_bytes(), used);
+        assert_eq!(
+            registry.budget_mut(budget).unwrap().memory_used_bytes(),
+            used
+        );
         assert_eq!(registry.remove(budget).err(), Some(ObjectError::InUse));
         for id in objects {
             registry.remove(id).expect("destroy");
@@ -467,7 +467,9 @@ mod tests {
             Err(ObjectError::BudgetExceeded),
             "the child object itself is charged first"
         );
-        let a = registry.create_budget(root, 7_000_000, 16 * 1024, 0).unwrap();
+        let a = registry
+            .create_budget(root, 7_000_000, 16 * 1024, 0)
+            .unwrap();
         assert_eq!(
             registry.create_budget(root, 4_000_000, 0, 0),
             Err(ObjectError::BudgetExceeded),
@@ -498,6 +500,8 @@ mod tests {
             registry.create(ObjectType::Reply, root),
             Err(ObjectError::BudgetExceeded)
         );
-        registry.remove(budget).expect("empty child budget can be reclaimed");
+        registry
+            .remove(budget)
+            .expect("empty child budget can be reclaimed");
     }
 }

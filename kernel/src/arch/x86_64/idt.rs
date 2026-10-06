@@ -15,9 +15,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use x86_64::registers::control::Cr2;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
-use super::{apic, ioapic};
 use super::gdt::DOUBLE_FAULT_IST_INDEX;
 use super::pic::PIC_VECTOR_BASE;
+use super::{apic, ioapic};
 use crate::sync::StaticCell;
 use crate::{kprintln, serial};
 

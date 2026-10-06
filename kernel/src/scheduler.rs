@@ -147,6 +147,8 @@ pub struct Scheduler {
     threads: BTreeMap<ThreadId, Box<Tcb>>,
     ready: VecDeque<ThreadId>,
     current: ThreadId,
+    /// Kept boxed so a dead thread's saved context does not move while we switch away from it.
+    #[allow(clippy::vec_box)]
     zombies: Vec<Box<Tcb>>,
     exits: VecDeque<(ThreadId, Exit)>,
     switches: u64,
@@ -355,7 +357,8 @@ impl Scheduler {
             self.current_tcb().state = State::Ready;
             self.ready.push_back(old);
         }
-        let position = (0..self.ready.len()).find(|i| self.eligible(self.ready[*i], objects, now_ns));
+        let position =
+            (0..self.ready.len()).find(|i| self.eligible(self.ready[*i], objects, now_ns));
         let next = match position {
             Some(i) => self.ready.remove(i).expect("index in range"),
             None => IDLE_THREAD,
@@ -370,7 +373,11 @@ impl Scheduler {
         let root = next_tcb.root.unwrap_or_else(paging::kernel_root);
         self.current = next;
         self.switches += 1;
-        let old_tcb = if self.threads.get(&old).is_some_and(|t| t.state == State::Dead) {
+        let old_tcb = if self
+            .threads
+            .get(&old)
+            .is_some_and(|t| t.state == State::Dead)
+        {
             let tcb = self.threads.remove(&old).expect("checked above");
             self.zombies.push(tcb);
             self.zombies.last_mut().expect("just pushed")

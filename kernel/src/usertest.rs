@@ -517,10 +517,17 @@ fn ipc_call_reply_ping_pong() {
         k.caps
             .insert(server.cspace, 4, ep, Rights::READ | Rights::WRITE, 0)
             .unwrap();
-        k.caps.insert(client.cspace, 4, ep, Rights::WRITE, 0x77).unwrap();
+        k.caps
+            .insert(client.cspace, 4, ep, Rights::WRITE, 0x77)
+            .unwrap();
     });
     assert!(wait_until(5000, || data(&client, FLAG) != 0));
-    assert_eq!(data(&client, FLAG), 1, "client error {:#x}", data(&client, FLAG));
+    assert_eq!(
+        data(&client, FLAG),
+        1,
+        "client error {:#x}",
+        data(&client, FLAG)
+    );
     assert_eq!(data(&server, FLAG), 0, "server error");
     assert_eq!(data(&server, R0), 0x77, "server saw the client's badge");
     assert_eq!(data(&server, R1), ROUNDS - 1);
@@ -537,7 +544,9 @@ fn ipc_transfers_a_capability_and_revoke_takes_it_back() {
     objects::with(|k| {
         let ep = k.objects.create(ObjectType::Endpoint, b).unwrap();
         let n = k.objects.create(ObjectType::Notification, b).unwrap();
-        k.caps.insert(receiver.cspace, 4, ep, Rights::READ, 0).unwrap();
+        k.caps
+            .insert(receiver.cspace, 4, ep, Rights::READ, 0)
+            .unwrap();
         k.caps
             .insert(sender.cspace, 4, ep, Rights::WRITE | Rights::GRANT, 0)
             .unwrap();
@@ -566,7 +575,9 @@ fn revoke_removes_capabilities_transferred_to_another_cspace() {
     // A second CSpace that outlives the exchange: the kernel stands in for the sender.
     objects::with(|k| {
         let ep = k.objects.create(ObjectType::Endpoint, b).unwrap();
-        k.caps.insert(receiver.cspace, 4, ep, Rights::READ, 0).unwrap();
+        k.caps
+            .insert(receiver.cspace, 4, ep, Rights::READ, 0)
+            .unwrap();
     });
     let owner = objects::with(|k| {
         let space = k.caps.create_space(8);
@@ -580,7 +591,10 @@ fn revoke_removes_capabilities_transferred_to_another_cspace() {
     objects::with(|k| {
         assert!(k.caps.get(receiver.cspace, 6).is_ok());
         k.caps.revoke(owner, 0).unwrap();
-        assert!(k.caps.get(receiver.cspace, 6).is_err(), "revoked across CSpaces");
+        assert!(
+            k.caps.get(receiver.cspace, 6).is_err(),
+            "revoked across CSpaces"
+        );
         k.caps.destroy_space(owner).unwrap();
     });
     reclaim(b);
@@ -647,10 +661,26 @@ fn invoke_creates_and_destroys_every_object_type() {
     let (before, alive, after) = (data(&p, R0), data(&p, R1), data(&p, R2));
     assert_eq!(alive - before, expected, "every object was charged");
     assert_eq!(after, before, "every charge was credited back");
-    assert_eq!(data(&p, 0x200), Error::InvalidCapability.raw(), "empty slot");
-    assert_eq!(data(&p, 0x208), Error::InvalidArgument.raw(), "kernel buffer");
-    assert_eq!(data(&p, 0x210), Error::InvalidArgument.raw(), "Irq from a budget");
-    assert_eq!(data(&p, 0x218), Error::BudgetExhausted.raw(), "oversized child");
+    assert_eq!(
+        data(&p, 0x200),
+        Error::InvalidCapability.raw(),
+        "empty slot"
+    );
+    assert_eq!(
+        data(&p, 0x208),
+        Error::InvalidArgument.raw(),
+        "kernel buffer"
+    );
+    assert_eq!(
+        data(&p, 0x210),
+        Error::InvalidArgument.raw(),
+        "Irq from a budget"
+    );
+    assert_eq!(
+        data(&p, 0x218),
+        Error::BudgetExhausted.raw(),
+        "oversized child"
+    );
     reclaim(b);
 }
 
@@ -658,7 +688,12 @@ fn invoke_creates_and_destroys_every_object_type() {
 fn init_module_is_a_valid_user_image() {
     let module = crate::MODULES
         .response()
-        .and_then(|r| r.modules().iter().find(|m| m.path().ends_with("/init")).copied())
+        .and_then(|r| {
+            r.modules()
+                .iter()
+                .find(|m| m.path().ends_with("/init"))
+                .copied()
+        })
         .expect("the test ISO ships boot/init");
     let b = budget(1);
     let entry = objects::with(|k| {
