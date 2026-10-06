@@ -267,8 +267,9 @@ extern "C" fn kmain() -> ! {
             ),
             None => kprintln!("  ioapic: none found; device IRQs unavailable"),
         }
+        let (free_before_scheduler, _) = mm::frame::stats();
+        objects::init(free_before_scheduler as u64 * carv_frames::FRAME_SIZE as u64);
         let (free, _) = mm::frame::stats();
-        objects::init(free as u64 * carv_frames::FRAME_SIZE as u64);
         kprintln!(
             "  objects: root budget owns {} MiB and the whole CPU; scheduler up (boot + idle threads)",
             free * carv_frames::FRAME_SIZE / (1024 * 1024)

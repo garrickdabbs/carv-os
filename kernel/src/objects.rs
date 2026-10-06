@@ -57,12 +57,12 @@ impl From<ObjectError> for carv_abi::Error {
     }
 }
 
-/// Bytes charged for a thread: its 32 KiB kernel stack plus the control block.
-pub const THREAD_BYTES: u64 = (crate::mm::kstack::KSTACK_PAGES as u64) * 4096 + 512;
-/// Bytes charged for an empty address space: its level-4 table and room for three lower tables.
+/// Bytes charged for a thread: its 32 KiB kernel stack plus the control block and FPU state.
+pub const THREAD_BYTES: u64 = (crate::mm::kstack::KSTACK_PAGES as u64) * 4096 + 1024;
+/// Bytes charged for an empty address space: its level-4 table.
 pub const ADDRESS_SPACE_BYTES: u64 = 4 * 4096;
-/// Bytes charged per page mapped into an address space.
-pub const PAGE_BYTES: u64 = 4096;
+/// Bytes reserved per user mapping for its data frame and up to three page-table frames.
+pub const PAGE_BYTES: u64 = 4 * 4096;
 const FRAME_BYTES: u64 = 4096;
 const ENDPOINT_BYTES: u64 = 128;
 const NOTIFICATION_BYTES: u64 = 64;
@@ -378,14 +378,21 @@ pub struct Kernel {
 
 static KERNEL: SpinLock<Option<Kernel>> = SpinLock::new(None);
 
-/// Builds the kernel state: a root budget owning the whole CPU and `memory_bytes`, no CSpaces,
-/// and a scheduler whose current thread is the caller (the boot thread). Call once, with
-/// interrupts disabled, after the heap is up.
+/// Builds the kernel state: a root budget owning the whole CPU and available `memory_bytes`, no
+/// CSpaces, and a scheduler whose current thread is the caller (the boot thread). Frames consumed
+/// by the scheduler's idle stack are deducted from the root budget. Call once, with interrupts
+/// disabled, after the heap is up.
 pub fn init(memory_bytes: u64) {
+    let free_before = frame::stats().0;
     let sched = Scheduler::new();
+    let scheduler_frames = free_before.saturating_sub(frame::stats().0) as u64;
+    let scheduler_bytes = scheduler_frames * carv_frames::FRAME_SIZE as u64;
     without_interrupts(|| {
         *KERNEL.lock() = Some(Kernel {
-            objects: ObjectRegistry::new(CPU_PERIOD_NS, memory_bytes),
+            objects: ObjectRegistry::new(
+                CPU_PERIOD_NS,
+                memory_bytes.saturating_sub(scheduler_bytes),
+            ),
             caps: CapSpaces::new(),
             sched,
         });

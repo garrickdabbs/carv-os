@@ -19,6 +19,23 @@ use super::gdt;
 
 const RFLAGS_IF: u64 = 1 << 9;
 
+/// Legacy x87/SSE state saved when switching away from a thread.
+#[repr(C, align(16))]
+pub(crate) struct FxState(#[allow(dead_code)] [u8; 512]);
+
+impl FxState {
+    pub(crate) const fn new() -> Self {
+        let mut bytes = [0; 512];
+        bytes[0] = 0x7f;
+        bytes[1] = 0x03;
+        bytes[24] = 0x80;
+        bytes[25] = 0x1f;
+        bytes[28] = 0xbf;
+        bytes[29] = 0xff;
+        Self(bytes)
+    }
+}
+
 /// Kernel stack top of the running thread, loaded by the syscall stub.
 static KERNEL_RSP: AtomicU64 = AtomicU64::new(0);
 /// Scratch slot for the user `rsp` between `syscall` and the switch to the kernel stack.
@@ -117,6 +134,8 @@ core::arch::global_asm!(
     "",
     ".global carv_switch_context",
     "carv_switch_context:",
+    "    fxsave64 [rdx]",
+    "    fxrstor64 [rcx]",
     "    push rbp",
     "    push rbx",
     "    push r12",
@@ -169,7 +188,12 @@ core::arch::global_asm!(
 
 unsafe extern "C" {
     fn carv_syscall_entry();
-    fn carv_switch_context(old_rsp: *mut u64, new_rsp: u64);
+    fn carv_switch_context(
+        old_rsp: *mut u64,
+        new_rsp: u64,
+        old_fx: *mut FxState,
+        new_fx: *const FxState,
+    );
     fn carv_thread_trampoline();
     fn carv_enter_user(context: *const UserContext) -> !;
 }
@@ -177,6 +201,7 @@ unsafe extern "C" {
 /// Programs EFER.SCE, STAR/LSTAR/SFMASK and turns on SMEP/SMAP. Call once after the GDT and IDT
 /// are loaded.
 pub fn init() {
+    enable_fpu();
     let sel = gdt::selectors();
     // `Star::write` checks the selector offsets that `syscall` and `sysretq` derive from STAR
     // (user data 8 bytes below user code, kernel data 8 bytes above kernel code), so a GDT that
@@ -192,6 +217,21 @@ pub fn init() {
     // programmed above.
     unsafe { Efer::update(|f| f.insert(EferFlags::SYSTEM_CALL_EXTENSIONS)) };
     enable_smap_smep();
+}
+
+fn enable_fpu() {
+    let mut cr0: u64;
+    let mut cr4: u64;
+    // SAFETY: early CPU setup; enable the architectural FXSAVE/SSE support required by the
+    // per-thread save areas while preserving unrelated control-register bits.
+    unsafe {
+        core::arch::asm!("mov {}, cr0", out(reg) cr0, options(nomem, nostack, preserves_flags));
+        cr0 = (cr0 | (1 << 1) | (1 << 5)) & !((1 << 2) | (1 << 3));
+        core::arch::asm!("mov cr0, {}", in(reg) cr0, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mov {}, cr4", out(reg) cr4, options(nomem, nostack, preserves_flags));
+        cr4 |= (1 << 9) | (1 << 10);
+        core::arch::asm!("mov cr4, {}", in(reg) cr4, options(nomem, nostack, preserves_flags));
+    }
 }
 
 fn enable_smap_smep() {
@@ -217,15 +257,21 @@ pub fn set_kernel_stack(top: u64) {
     gdt::set_kernel_stack(VirtAddr::new(top));
 }
 
-/// Saves the callee-saved registers and stack pointer into `*old_rsp` and resumes the context
-/// saved at `new_rsp`.
+/// Saves the callee-saved registers, stack pointer and extended state into the old context, then
+/// resumes the new context.
 ///
 /// # Safety
-/// Interrupts must be disabled; `old_rsp` must stay valid until this context is resumed, and
-/// `new_rsp` must be a value saved by this function or built by [`prepare_stack`].
-pub unsafe fn switch_context(old_rsp: *mut u64, new_rsp: u64) {
+/// Interrupts must be disabled; all context pointers must remain valid across the switch, the
+/// extended-state pointers must be 16-byte aligned, and `new_rsp` must be a value saved by this
+/// function or built by [`prepare_stack`].
+pub unsafe fn switch_context(
+    old_rsp: *mut u64,
+    new_rsp: u64,
+    old_fx: *mut FxState,
+    new_fx: *const FxState,
+) {
     // SAFETY: forwarded from the caller.
-    unsafe { carv_switch_context(old_rsp, new_rsp) }
+    unsafe { carv_switch_context(old_rsp, new_rsp, old_fx, new_fx) }
 }
 
 /// Lays out a fresh kernel stack so that [`switch_context`] to the returned stack pointer calls

@@ -89,6 +89,11 @@ pub fn has_input(gsi: u8) -> bool {
     u64::from(gsi) < INPUTS.load(Ordering::Relaxed)
 }
 
+/// Whether `gsi` is level-triggered and must remain unavailable until IRQ rearming is supported.
+pub fn is_level_triggered(gsi: u8) -> bool {
+    has_input(gsi) && MODES[usize::from(gsi)].load(Ordering::Relaxed) as u32 & LEVEL != 0
+}
+
 /// Masks or unmasks `gsi`, delivering it to the boot CPU on its vector when unmasked.
 pub fn set_masked(gsi: u8, masked: bool) {
     if !has_input(gsi) {

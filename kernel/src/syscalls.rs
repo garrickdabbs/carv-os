@@ -275,9 +275,6 @@ fn send(k: &mut Kernel, slot: u64, buffer: u64, call: bool) -> Step {
     let ep = endpoint_cap(k, slot, Rights::WRITE)?;
     let cur = k.sched.current();
     let message = read_message(k, cur, buffer)?;
-    if message.info.caps() > 0 && !c.rights().contains(Rights::GRANT) {
-        return Err(Error::PermissionDenied);
-    }
     let badge = c.badge();
     if let Some(receiver) = endpoint(k, ep).receivers.pop_front() {
         let rbuf = k.sched.thread(receiver).map_or(0, |t| t.ipc.buffer);
@@ -613,6 +610,9 @@ fn invoke(k: &mut Kernel, slot: u64, m: u64, a: [u64; 4]) -> Step {
             if gsi >= ioapic::MAX_GSI || !ioapic::has_input(gsi) {
                 return Err(Error::InvalidArgument);
             }
+            if ioapic::is_level_triggered(gsi) {
+                return Err(Error::InvalidOperation);
+            }
             let claimed = k
                 .objects
                 .ids()
@@ -789,23 +789,49 @@ pub fn load_elf(k: &mut Kernel, space: ObjectId, bytes: &[u8]) -> Result<u64, Er
     let mut segments = [crate::elf::LoadSegment::default(); crate::elf::MAX_SEGMENTS];
     let image = crate::elf::validate(crate::elf::Module { bytes }, &mut segments)
         .map_err(|_| Error::InvalidArgument)?;
+    let reserved_pages = image
+        .segments
+        .iter()
+        .try_fold(0u64, |total, segment| {
+            let start = segment.virtual_address & !4095;
+            let end = segment
+                .virtual_address
+                .checked_add(segment.memory_size)?
+                .checked_add(4095)?
+                & !4095;
+            total.checked_add((end - start) / 4096)
+        })
+        .ok_or(Error::InvalidArgument)?;
+    let reserved_charge = reserved_pages
+        .checked_mul(objects::PAGE_BYTES)
+        .ok_or(Error::BudgetExhausted)?;
+    if !matches!(k.objects.get(space), Some(Object::AddressSpace(_))) {
+        return Err(Error::InvalidCapability);
+    }
+    k.objects.charge_more(space, reserved_charge)?;
     let Some(Object::AddressSpace(a)) = k.objects.get_mut(space) else {
+        k.objects.uncharge(space, reserved_charge);
         return Err(Error::InvalidCapability);
     };
     let before = a.mapped_pages();
-    let entry = image.map_into(a).map_err(|_| Error::InvalidArgument);
-    let pages = (a.mapped_pages() - before) as u64;
-    k.objects.charge_more(space, pages * objects::PAGE_BYTES)?;
-    entry
+    match image.map_into(a) {
+        Ok(entry) => {
+            let mapped_charge = (a.mapped_pages() - before) as u64 * objects::PAGE_BYTES;
+            k.objects
+                .uncharge(space, reserved_charge.saturating_sub(mapped_charge));
+            Ok(entry)
+        }
+        Err(_) => Err(Error::InvalidArgument),
+    }
 }
 
 /// Maps the initial stack ([`carv_abi::init::STACK_PAGES`] pages below
-/// [`carv_abi::init::STACK_TOP`]) and returns the stack pointer to start with.
+/// [`carv_abi::init::STACK_TOP`]) and returns a SysV-aligned initial stack pointer.
 pub fn map_stack(k: &mut Kernel, space: ObjectId) -> Result<u64, Error> {
     for i in 1..=init::STACK_PAGES {
         map_page(k, space, init::STACK_TOP - i * 4096, true, false)?;
     }
-    Ok(init::STACK_TOP)
+    Ok(init::STACK_TOP - 8)
 }
 
 /// Starts the process's thread at `rip` with stack `rsp` and first argument `rdi`.

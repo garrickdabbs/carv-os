@@ -61,6 +61,21 @@ core::arch::global_asm!(
     "1:  inc qword ptr [rax]",
     "    jmp 1b",
     "ut_spin_end:",
+    // ---- fpu: keep the initial XMM0 value across every yield and context switch.
+    ".global ut_fpu_start, ut_fpu_end",
+    "ut_fpu_start:",
+    "    mov ebx, 0x500000",
+    "    movd xmm0, edi",
+    "1:  mov eax, 7",
+    "    syscall",
+    "    movd eax, xmm0",
+    "    cmp eax, edi",
+    "    jne 2f",
+    "    inc qword ptr [rbx + 0x118]",
+    "    jmp 1b",
+    "2:  mov qword ptr [rbx + 0x110], 1",
+    "    jmp 2b",
+    "ut_fpu_end:",
     // ---- ping client: rdi = rounds. Calls slot 4 with word0 = n, expects n + 1 back; sums the
     //      rdtsc cycles of every round trip into R1 and sets FLAG = 1 (or the error code).
     ".global ut_client_start, ut_client_end",
@@ -354,6 +369,8 @@ unsafe extern "C" {
     static ut_fault_end: u8;
     static ut_spin_start: u8;
     static ut_spin_end: u8;
+    static ut_fpu_start: u8;
+    static ut_fpu_end: u8;
     static ut_client_start: u8;
     static ut_client_end: u8;
     static ut_server_start: u8;
@@ -476,6 +493,20 @@ fn ring3_fault_kills_only_the_faulting_thread() {
 }
 
 #[test_case]
+fn ring3_threads_keep_independent_simd_state() {
+    let b = budget(5);
+    let code = prog!(ut_fpu_start, ut_fpu_end);
+    let (one, two) = (
+        spawn(b, code, 0x3f80_0000, false),
+        spawn(b, code, 0x4000_0000, false),
+    );
+    assert!(wait_until(300, || data(&one, R0) > 100 && data(&two, R0) > 100));
+    assert_eq!(data(&one, FLAG), 0, "first thread's XMM state changed");
+    assert_eq!(data(&two, FLAG), 0, "second thread's XMM state changed");
+    reclaim(b);
+}
+
+#[test_case]
 fn budgets_split_the_cpu_thirty_seventy() {
     let b3 = budget(3);
     let b7 = budget_now(7);
@@ -548,7 +579,7 @@ fn ipc_transfers_a_capability_and_revoke_takes_it_back() {
             .insert(receiver.cspace, 4, ep, Rights::READ, 0)
             .unwrap();
         k.caps
-            .insert(sender.cspace, 4, ep, Rights::WRITE | Rights::GRANT, 0)
+            .insert(sender.cspace, 4, ep, Rights::WRITE, 0)
             .unwrap();
         k.caps.insert(sender.cspace, 5, n, Rights::ALL, 0).unwrap();
     });

@@ -101,6 +101,7 @@ pub struct Tcb {
     /// Lifecycle state.
     pub state: State,
     saved_rsp: u64,
+    fx_state: syscall::FxState,
     kstack: Option<KernelStack>,
     /// Page-table root the thread runs with (`None`: the kernel's).
     pub root: Option<PhysFrame>,
@@ -128,6 +129,7 @@ impl Tcb {
             id,
             state,
             saved_rsp: 0,
+            fx_state: syscall::FxState::new(),
             kstack,
             root: None,
             space: None,
@@ -158,6 +160,8 @@ pub struct Scheduler {
 struct Switch {
     old_rsp: *mut u64,
     new_rsp: u64,
+    old_fx: *mut syscall::FxState,
+    new_fx: *const syscall::FxState,
     kstack_top: Option<u64>,
     root: PhysFrame,
 }
@@ -369,6 +373,7 @@ impl Scheduler {
             return None;
         }
         let new_rsp = next_tcb.saved_rsp;
+        let new_fx = &next_tcb.fx_state as *const syscall::FxState;
         let kstack_top = next_tcb.kstack.as_ref().map(KernelStack::top);
         let root = next_tcb.root.unwrap_or_else(paging::kernel_root);
         self.current = next;
@@ -387,6 +392,8 @@ impl Scheduler {
         Some(Switch {
             old_rsp: &raw mut old_tcb.saved_rsp,
             new_rsp,
+            old_fx: &raw mut old_tcb.fx_state,
+            new_fx,
             kstack_top,
             root,
         })
@@ -424,7 +431,9 @@ pub fn reschedule() {
     // SAFETY: interrupts are off; `old_rsp` points into a boxed control block that stays alive
     // (live thread or parked zombie) until this context is resumed or reaped by another thread;
     // `new_rsp` was saved by `switch_context` or built by `prepare_stack`.
-    unsafe { syscall::switch_context(switch.old_rsp, switch.new_rsp) };
+    unsafe {
+        syscall::switch_context(switch.old_rsp, switch.new_rsp, switch.old_fx, switch.new_fx)
+    };
 }
 
 /// Blocks the running thread for `ms` timer ticks. Interrupts must be disabled.

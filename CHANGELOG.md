@@ -16,7 +16,10 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   capabilities routing GSIs to Notifications; `userland/init`, built by `cargo xtask build` and
   loaded from a Limine module, runs in ring 3 with its root CSpace. Smoke and perf now wait for
   `init: idle` instead of `halting`. ABI v1 addendum (syscall results, `invoke` methods, root
-  CSpace, `debug_putc` in all builds) proposed in ADR-0003. 41 in-kernel tests.
+  CSpace, `debug_putc` in all builds) proposed in ADR-0003. 42 in-kernel tests. Review fixes
+  preserve per-thread x87/SSE state, enforce transfer GRANT on attached capabilities, reject
+  unsupported level-triggered IRQs, and account for page-table frames, the idle stack, and ELF
+  mappings before use.
 - P2.9: in-kernel tests for `kernel/src/elf.rs` (#64): a valid image is accepted and non-load
   headers skipped; truncated, non-x86-64 and out-of-bounds program-header tables, W+X, overrun,
   wrapping, misaligned and overlapping segments, an entry point outside an executable segment and

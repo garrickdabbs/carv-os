@@ -199,7 +199,6 @@ macro_rules! fatal_with_code {
 fatal! {
     divide_error => "#DE divide error",
     debug => "#DB debug",
-    non_maskable_interrupt => "NMI",
     overflow => "#OF overflow",
     bound_range_exceeded => "#BR bound range exceeded",
     invalid_opcode => "#UD invalid opcode",
@@ -219,6 +218,14 @@ fatal_with_code! {
     cp_protection_exception => "#CP control protection",
     vmm_communication_exception => "#VC VMM communication",
     security_exception => "#SX security exception",
+}
+
+/// An NMI is an asynchronous system event, not a fault attributable to user code.
+extern "x86-interrupt" fn non_maskable_interrupt(frame: InterruptStackFrame) {
+    panic!(
+        "EXCEPTION NMI at {:#x}\n{frame:#?}",
+        frame.instruction_pointer.as_u64()
+    );
 }
 
 /// `#MC` is diverging: the hardware state is not trustworthy enough to return.
