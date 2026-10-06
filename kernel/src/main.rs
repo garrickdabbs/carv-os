@@ -54,6 +54,8 @@ mod sync;
 mod syscalls;
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod usertest;
 
 use arch::x86_64::halt_forever;
 

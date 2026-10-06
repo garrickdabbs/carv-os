@@ -206,6 +206,7 @@ fn enable_smap_smep() {
 }
 
 /// Address of the syscall entry stub (what LSTAR must hold).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn entry_address() -> u64 {
     carv_syscall_entry as *const () as u64
 }
@@ -214,11 +215,6 @@ pub fn entry_address() -> u64 {
 pub fn set_kernel_stack(top: u64) {
     KERNEL_RSP.store(top, Ordering::Relaxed);
     gdt::set_kernel_stack(VirtAddr::new(top));
-}
-
-/// Kernel stack top used for the next transition from ring 3.
-pub fn kernel_stack() -> u64 {
-    KERNEL_RSP.load(Ordering::Relaxed)
 }
 
 /// Saves the callee-saved registers and stack pointer into `*old_rsp` and resumes the context

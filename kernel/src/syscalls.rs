@@ -495,6 +495,7 @@ pub fn destroy_object(k: &mut Kernel, id: ObjectId) -> Result<(), Error> {
 }
 
 /// Destroys everything `budget` pays for (child budgets first, recursively), then the budget.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn reclaim_budget(k: &mut Kernel, budget: ObjectId) -> Result<(), Error> {
     loop {
         let next = k
@@ -613,7 +614,7 @@ fn invoke(k: &mut Kernel, slot: u64, m: u64, a: [u64; 4]) -> Step {
             Ok(Outcome::Done(0, 0))
         }
         method::IRQ_CONTROL_GET => {
-            let control = typed_cap(k, slot, Rights::WRITE, ObjectType::IrqControl)?.object();
+            typed_cap(k, slot, Rights::WRITE, ObjectType::IrqControl)?;
             let gsi = u8::try_from(a[0]).map_err(|_| Error::InvalidArgument)?;
             if gsi >= ioapic::MAX_GSI || !ioapic::has_input(gsi) {
                 return Err(Error::InvalidArgument);
@@ -626,7 +627,12 @@ fn invoke(k: &mut Kernel, slot: u64, m: u64, a: [u64; 4]) -> Step {
                 return Err(Error::InvalidOperation);
             }
             let dest = empty_slot(k, space, a[1])?;
-            let payer = k.objects.charge_of(control).ok_or(Error::InvalidCapability)?.0;
+            // The Irq object is paid for by the budget the calling thread runs on.
+            let payer = k
+                .sched
+                .current_tcb()
+                .budget
+                .unwrap_or_else(|| k.objects.root_budget());
             let line = IrqLine {
                 gsi,
                 notification: None,
@@ -698,6 +704,7 @@ pub struct Process {
     /// The address-space object.
     pub space: ObjectId,
     /// The CSpace the thread names capabilities in.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub cspace: SpaceId,
 }
 
@@ -753,6 +760,7 @@ pub fn create_process(k: &mut Kernel, budget: ObjectId, irq_control: bool) -> Re
 
 /// Maps `bytes` at page-aligned `va` into `space` (fresh pages with the given permissions) and
 /// copies them in.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn load(
     k: &mut Kernel,
     space: ObjectId,

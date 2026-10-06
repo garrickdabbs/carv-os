@@ -421,6 +421,7 @@ pub fn reschedule() {
 }
 
 /// Blocks the running thread for `ms` timer ticks. Interrupts must be disabled.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn sleep_ms(ms: u64) {
     let until = now_ticks() + ms;
     objects::with(|k| k.sched.block_current(Wait::Sleep(until)));

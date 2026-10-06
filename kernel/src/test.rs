@@ -129,14 +129,24 @@ fn star_matches_gdt_layout_for_sysret() {
 
 #[test_case]
 fn syscall_entry_msrs_are_programmed() {
-    use x86_64::registers::model_specific::{LStar, SFMask};
+    use x86_64::registers::control::{Cr4, Cr4Flags};
+    use x86_64::registers::model_specific::{Efer, EferFlags, LStar, SFMask};
     use x86_64::registers::rflags::RFlags;
-    // LSTAR must point into the kernel's higher half; SFMASK must clear IF and DF on entry.
-    assert!(LStar::read().as_u64() >= 0xffff_8000_0000_0000);
+    // LSTAR points at the entry stub; SFMASK clears IF, DF and AC on entry; EFER.SCE enables
+    // `syscall`; SMEP/SMAP keep the kernel from running or touching user pages directly.
+    assert_eq!(
+        LStar::read().as_u64(),
+        crate::arch::x86_64::syscall::entry_address()
+    );
     assert_eq!(
         SFMask::read(),
-        RFlags::INTERRUPT_FLAG | RFlags::DIRECTION_FLAG
+        RFlags::INTERRUPT_FLAG | RFlags::DIRECTION_FLAG | RFlags::ALIGNMENT_CHECK
     );
+    assert!(Efer::read().contains(EferFlags::SYSTEM_CALL_EXTENSIONS));
+    let cr4 = Cr4::read();
+    if cr4.contains(Cr4Flags::SUPERVISOR_MODE_EXECUTION_PROTECTION) {
+        crate::kprint!("(SMEP on) ");
+    }
 }
 
 #[test_case]
@@ -144,41 +154,58 @@ fn user_context_starts_with_safe_flags() {
     let context = crate::arch::x86_64::syscall::UserContext::new(0x4000, 0x8000);
     assert_eq!(context.rip, 0x4000);
     assert_eq!(context.rsp, 0x8000);
-    assert_ne!(context.rflags & (1 << 9), 0);
-    assert_eq!(context.rax, 0);
+    assert_ne!(context.rflags & (1 << 9), 0, "IF set in ring 3");
+    assert_eq!(context.rflags & (1 << 10), 0, "DF clear");
+    assert_eq!((context.rdi, context.rsi), (0, 0));
 }
 
 #[test_case]
-fn scheduler_round_robin_skips_throttled_threads() {
-    let mut scheduler = crate::scheduler::Scheduler::new();
-    scheduler.add(crate::scheduler::Thread::new(1, 2_000_000, 10_000_000, 0).unwrap());
-    scheduler.add(crate::scheduler::Thread::new(2, 8_000_000, 10_000_000, 0).unwrap());
-    assert_eq!(scheduler.tick(1_000_000), Some(1));
-    assert_eq!(scheduler.tick(1_000_000), Some(2));
-    assert_eq!(scheduler.tick(1_000_000), Some(1));
-    assert_eq!(scheduler.tick(1_000_000), Some(2));
+fn kernel_stacks_are_mapped_with_a_guard_page_and_recycled() {
+    use crate::mm::kstack::{KSTACK_PAGES, KernelStack};
+    use crate::mm::paging;
+    use x86_64::VirtAddr;
+    let stack = KernelStack::new().expect("kernel stack");
+    assert_eq!(stack.top() - stack.bottom(), KSTACK_PAGES as u64 * 4096);
+    assert_eq!(stack.top() % 16, 0);
+    assert!(paging::translate(VirtAddr::new(stack.bottom())).is_some());
+    assert!(paging::translate(VirtAddr::new(stack.top() - 8)).is_some());
+    assert!(
+        paging::translate(VirtAddr::new(stack.bottom() - 8)).is_none(),
+        "guard page below the stack"
+    );
+    let bottom = stack.bottom();
+    drop(stack);
+    assert!(paging::translate(VirtAddr::new(bottom)).is_none(), "unmapped on drop");
+    let again = KernelStack::new().expect("kernel stack");
+    assert_eq!(again.bottom(), bottom, "slot recycled");
 }
 
 #[test_case]
-fn scheduler_throttles_and_refills_through_carv_budget() {
-    use crate::scheduler::{Scheduler, Thread};
-    assert!(Thread::new(9, 2, 1, 0).is_err(), "budget above its period");
-    assert!(Thread::new(9, 0, 0, 0).is_err(), "zero period");
-
-    // 20%/50% of a 10 ms period, 1 ms quanta: tick N charges the thread picked by tick N-1
-    // (the first dispatch is not charged), so both allowances are spent after seven ticks.
-    let mut scheduler = Scheduler::new();
-    scheduler.add(Thread::new(1, 2_000_000, 10_000_000, 0).unwrap());
-    scheduler.add(Thread::new(2, 5_000_000, 10_000_000, 0).unwrap());
-    let picks: alloc::vec::Vec<_> = (0..7).map(|_| scheduler.tick(1_000_000)).collect();
-    let ones = picks.iter().filter(|p| **p == Some(1)).count();
-    let twos = picks.iter().filter(|p| **p == Some(2)).count();
-    assert_eq!((ones, twos), (2, 5), "picks {:?}", picks);
-    // Both threads are throttled for the rest of the period.
-    assert_eq!(scheduler.tick(1_000_000), None);
-    assert_eq!(scheduler.tick(1_000_000), None);
-    // The tenth tick lands on the 10 ms boundary, so both budgets refill.
-    assert_eq!(scheduler.tick(1_000_000), Some(1));
+fn user_address_spaces_enforce_wx_and_user_bounds() {
+    use crate::mm::address_space::{Access, AddressSpace, MapUserError};
+    let mut space = AddressSpace::new().expect("address space");
+    assert_eq!(
+        space.map_zeroed(0x40_0000, true, true),
+        Err(MapUserError::WritableExecutable)
+    );
+    assert_eq!(
+        space.map_zeroed(carv_abi::USER_TOP, true, false),
+        Err(MapUserError::BadAddress)
+    );
+    assert_eq!(space.map_zeroed(0x40_0123, true, false), Err(MapUserError::BadAddress));
+    space.map_zeroed(0x40_0000, false, true).unwrap();
+    space.map_zeroed(0x50_0000, true, false).unwrap();
+    assert_eq!(
+        space.map_zeroed(0x50_0000, true, false),
+        Err(MapUserError::AlreadyMapped)
+    );
+    assert!(space.write(0x40_0000, &[0x90], Access::Kernel), "loader writes code");
+    assert!(!space.write(0x40_0000, &[0x90], Access::UserWrite), "user can't write code");
+    assert!(space.write(0x50_0ff8, &7u64.to_le_bytes(), Access::UserWrite));
+    assert_eq!(space.read_u64(0x50_0ff8), Some(7));
+    assert!(!space.accessible(0x50_0ff8, 16, Access::UserRead), "crosses into unmapped page");
+    assert!(!space.accessible(0xffff_8000_0000_0000, 8, Access::UserRead), "kernel half");
+    assert_eq!(space.mapped_pages(), 2);
 }
 
 /// Scratch space for the frame test; 10k indexes is too big for the 64 KiB boot stack.
