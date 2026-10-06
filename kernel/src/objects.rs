@@ -1,131 +1,103 @@
-//! Kernel object storage and the object-local part of `invoke`.
+//! Kernel objects, their storage, and budget accounting (P2.4).
 //!
-//! This is deliberately independent of the syscall ABI.  The syscall dispatcher can translate
-//! ABI method numbers into [`InvokeMethod`] once that ABI is available, while this module owns
-//! object identity, lifetime, and budget accounting.
+//! Every kernel object lives in the [`ObjectRegistry`] and is reached by user code only through a
+//! capability in its CSpace (`carv_caps::CapSpaces`); the capability's object id is the registry
+//! key. Each object is paid for by a Budget object: creating it charges the budget's memory
+//! account (`carv_budget::Budget::charge_memory`) and destroying it credits the charge back.
+//! Child budgets are carved out of their parent with `carv_budget::Budget::carve_out`, so a child
+//! can never hold more CPU time or memory than its parent had uncommitted, and destroying a child
+//! returns its reservation (`release_child`).
+//!
+//! The registry, the CSpaces and the scheduler together form the [`Kernel`] state, kept behind
+//! one lock that is only taken with interrupts disabled ([`with`]).
 
 use alloc::collections::BTreeMap;
 
+use carv_abi::ObjectType;
+use carv_budget::Budget;
+use carv_caps::CapSpaces;
+
+use crate::ipc::{Endpoint, IrqLine, Notification};
+use crate::mm::address_space::AddressSpace;
 use crate::mm::frame;
+use crate::scheduler::Scheduler;
+use crate::sync::{SpinLock, without_interrupts};
 
-/// Stable identity for an object while it is present in a registry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ObjectId(u64);
-
-impl ObjectId {
-    /// Returns the numeric identity, useful when adapting to an ABI handle.
-    pub const fn raw(self) -> u64 {
-        self.0
-    }
-}
-
-/// The kernel object types supported by the initial registry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ObjectType {
-    /// Execution context.
-    Thread,
-    /// Page-table root.
-    AddressSpace,
-    /// Physical memory range.
-    Frame,
-    /// Synchronous IPC rendezvous.
-    Endpoint,
-    /// Asynchronous signal word.
-    Notification,
-    /// Resource accounting object.
-    Budget,
-    /// One-shot IPC reply.
-    Reply,
-}
-
-/// Operations that can be dispatched by a future syscall `invoke` implementation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InvokeMethod {
-    /// Return the object's type and budget charge.
-    Describe,
-    /// Destroy the object and credit its charge.
-    Destroy,
-    /// Read budget counters; valid only for a [`ObjectType::Budget`].
-    ReadBudget,
-}
-
-/// Result of dispatching an [`InvokeMethod`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InvokeResult {
-    /// Description of a live object.
-    Description {
-        /// Object type.
-        object_type: ObjectType,
-        /// Budget charged for this object.
-        charged_bytes: usize,
-    },
-    /// The object was destroyed.
-    Destroyed,
-    /// Current and maximum memory counters for a budget.
-    Budget {
-        /// Bytes currently charged.
-        used_bytes: usize,
-        /// Maximum bytes this budget may charge.
-        limit_bytes: usize,
-    },
-}
+/// Stable identity of a registry object; also the object id stored in capabilities.
+pub type ObjectId = u64;
 
 /// Errors returned by registry operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjectError {
     /// The requested object does not exist.
     NotFound,
-    /// The object's budget cannot pay the requested charge.
+    /// The paying budget cannot cover the charge.
     BudgetExceeded,
-    /// The requested method is not implemented by this object type.
+    /// The object has the wrong type for the operation, or the operation is not allowed on it.
     InvalidMethod,
     /// The root budget cannot be destroyed.
     RootBudget,
+    /// The object is still in use (a budget paying for live objects, an address space a thread
+    /// runs in).
+    InUse,
+    /// Frames ran out.
+    OutOfMemory,
 }
 
-const THREAD_BYTES: usize = 256;
-const ADDRESS_SPACE_BYTES: usize = 128;
-const FRAME_BYTES: usize = 4096;
-const ENDPOINT_BYTES: usize = 128;
-const NOTIFICATION_BYTES: usize = 64;
-const BUDGET_BYTES: usize = 128;
-const REPLY_BYTES: usize = 64;
+impl From<ObjectError> for carv_abi::Error {
+    fn from(e: ObjectError) -> Self {
+        match e {
+            ObjectError::NotFound => Self::InvalidCapability,
+            ObjectError::BudgetExceeded => Self::BudgetExhausted,
+            ObjectError::InvalidMethod | ObjectError::RootBudget | ObjectError::InUse => {
+                Self::InvalidOperation
+            }
+            ObjectError::OutOfMemory => Self::OutOfMemory,
+        }
+    }
+}
 
-/// Resource budget tracked by the object registry.
+/// Bytes charged for a thread: its 32 KiB kernel stack plus the control block and FPU state.
+pub const THREAD_BYTES: u64 = (crate::mm::kstack::KSTACK_PAGES as u64) * 4096 + 1024;
+/// Bytes charged for an empty address space: its level-4 table.
+pub const ADDRESS_SPACE_BYTES: u64 = 4 * 4096;
+/// Bytes reserved per user mapping for its data frame and up to three page-table frames.
+pub const PAGE_BYTES: u64 = 4 * 4096;
+const FRAME_BYTES: u64 = 4096;
+const ENDPOINT_BYTES: u64 = 128;
+const NOTIFICATION_BYTES: u64 = 64;
+const BUDGET_BYTES: u64 = 128;
+const REPLY_BYTES: u64 = 64;
+const IRQ_BYTES: u64 = 64;
+
+/// CPU period every budget uses (10 ms, ten timer ticks).
+pub const CPU_PERIOD_NS: u64 = 10_000_000;
+
+/// Bytes charged to the paying budget when an object of `ty` is created.
+pub const fn object_bytes(ty: ObjectType) -> u64 {
+    match ty {
+        ObjectType::Thread => THREAD_BYTES,
+        ObjectType::AddressSpace => ADDRESS_SPACE_BYTES,
+        ObjectType::Frame => FRAME_BYTES,
+        ObjectType::Endpoint => ENDPOINT_BYTES,
+        ObjectType::Notification => NOTIFICATION_BYTES,
+        ObjectType::Budget => BUDGET_BYTES,
+        ObjectType::Reply => REPLY_BYTES,
+        ObjectType::Irq | ObjectType::IrqControl => IRQ_BYTES,
+    }
+}
+
+/// A frame object: one zeroed physical frame, freed when the object is destroyed.
 #[derive(Debug)]
-pub struct BudgetObject {
-    used_bytes: usize,
-    limit_bytes: usize,
-}
-
-impl BudgetObject {
-    /// Creates an empty budget with `limit_bytes` available.
-    pub const fn new(limit_bytes: usize) -> Self {
-        Self {
-            used_bytes: 0,
-            limit_bytes,
-        }
-    }
-
-    fn charge(&mut self, bytes: usize) -> Result<(), ObjectError> {
-        let next = self
-            .used_bytes
-            .checked_add(bytes)
-            .ok_or(ObjectError::BudgetExceeded)?;
-        if next > self.limit_bytes {
-            return Err(ObjectError::BudgetExceeded);
-        }
-        self.used_bytes = next;
-        Ok(())
-    }
-
-    fn credit(&mut self, bytes: usize) {
-        self.used_bytes = self.used_bytes.saturating_sub(bytes);
-    }
-}
-
-struct FrameObject {
+pub struct FrameObject {
     frame: frame::Frame,
+}
+
+impl FrameObject {
+    /// The frame's physical address.
+    pub fn start(&self) -> u64 {
+        self.frame.start().as_u64()
+    }
 }
 
 impl Drop for FrameObject {
@@ -134,65 +106,75 @@ impl Drop for FrameObject {
     }
 }
 
-enum Object {
+/// The state behind one object id.
+pub enum Object {
+    /// A thread; its control block lives in the scheduler under the same id.
     Thread,
-    AddressSpace,
-    #[allow(dead_code)]
+    /// A user address space.
+    AddressSpace(AddressSpace),
+    /// One physical frame.
     Frame(FrameObject),
-    Endpoint,
-    Notification,
-    Budget(BudgetObject),
+    /// A synchronous IPC endpoint.
+    Endpoint(Endpoint),
+    /// An asynchronous signal word.
+    Notification(Notification),
+    /// A CPU and memory account.
+    Budget(Budget),
+    /// A one-shot reply object (replies are implicit in the thread today; the object is
+    /// accounted so user code can hold one).
     Reply,
+    /// One hardware interrupt line.
+    Irq(IrqLine),
+    /// The authority to create Irq objects.
+    IrqControl,
 }
 
 impl Object {
-    fn object_type(&self) -> ObjectType {
+    /// The ABI type of this object.
+    pub fn object_type(&self) -> ObjectType {
         match self {
             Self::Thread => ObjectType::Thread,
-            Self::AddressSpace => ObjectType::AddressSpace,
+            Self::AddressSpace(_) => ObjectType::AddressSpace,
             Self::Frame(_) => ObjectType::Frame,
-            Self::Endpoint => ObjectType::Endpoint,
-            Self::Notification => ObjectType::Notification,
+            Self::Endpoint(_) => ObjectType::Endpoint,
+            Self::Notification(_) => ObjectType::Notification,
             Self::Budget(_) => ObjectType::Budget,
             Self::Reply => ObjectType::Reply,
-        }
-    }
-
-    fn budget(&self) -> Option<&BudgetObject> {
-        match self {
-            Self::Budget(budget) => Some(budget),
-            _ => None,
+            Self::Irq(_) => ObjectType::Irq,
+            Self::IrqControl => ObjectType::IrqControl,
         }
     }
 }
 
 struct Entry {
     object: Object,
-    budget: ObjectId,
-    charged_bytes: usize,
+    /// The budget that pays for this object (a budget's parent pays for it).
+    payer: ObjectId,
+    charged: u64,
 }
 
 /// Registry of live kernel objects.
-///
-/// The registry itself has no global authority and is intended to be held by the future kernel
-/// object manager.  Every non-root object has an owning budget; removing it credits that budget.
 pub struct ObjectRegistry {
-    next_id: u64,
+    next_id: ObjectId,
     root_budget: ObjectId,
     entries: BTreeMap<ObjectId, Entry>,
 }
 
 impl ObjectRegistry {
-    /// Creates a registry with one uncharged root budget.
-    pub fn new(root_limit_bytes: usize) -> Self {
-        let root_budget = ObjectId(1);
+    /// Creates a registry with one root budget owning `cpu_ns` of every [`CPU_PERIOD_NS`] and
+    /// `memory_bytes` of memory. The root budget pays for nothing itself.
+    pub fn new(cpu_ns: u64, memory_bytes: u64) -> Self {
+        let root_budget = 1;
         let mut entries = BTreeMap::new();
         entries.insert(
             root_budget,
             Entry {
-                object: Object::Budget(BudgetObject::new(root_limit_bytes)),
-                budget: root_budget,
-                charged_bytes: 0,
+                object: Object::Budget(
+                    Budget::new(cpu_ns, CPU_PERIOD_NS, memory_bytes, 0)
+                        .expect("root budget fits its period"),
+                ),
+                payer: root_budget,
+                charged: 0,
             },
         );
         Self {
@@ -202,135 +184,238 @@ impl ObjectRegistry {
         }
     }
 
-    /// Returns the registry's root budget, which may create child budgets and pay for objects.
+    /// The root budget: the system's untyped authority.
     pub const fn root_budget(&self) -> ObjectId {
         self.root_budget
     }
 
-    /// Creates a child budget charged to `parent`.
-    pub fn create_budget(
-        &mut self,
-        parent: ObjectId,
-        limit_bytes: usize,
-    ) -> Result<ObjectId, ObjectError> {
-        self.charge(parent, BUDGET_BYTES)?;
-        let id = self.insert(
-            Object::Budget(BudgetObject::new(limit_bytes)),
-            parent,
-            BUDGET_BYTES,
-        );
-        Ok(id)
+    /// The object behind `id`.
+    pub fn get(&self, id: ObjectId) -> Option<&Object> {
+        self.entries.get(&id).map(|e| &e.object)
     }
 
-    /// Creates one kernel object and charges its owning budget.
-    pub fn create(
-        &mut self,
-        object_type: ObjectType,
-        budget: ObjectId,
-    ) -> Result<ObjectId, ObjectError> {
-        let bytes = object_bytes(object_type);
-        self.charge(budget, bytes)?;
-        let object = match object_type {
-            ObjectType::Thread => Object::Thread,
-            ObjectType::AddressSpace => Object::AddressSpace,
-            ObjectType::Frame => Object::Frame(FrameObject {
-                frame: frame::allocate().ok_or_else(|| {
-                    self.credit(budget, bytes);
-                    ObjectError::BudgetExceeded
-                })?,
-            }),
-            ObjectType::Endpoint => Object::Endpoint,
-            ObjectType::Notification => Object::Notification,
-            ObjectType::Budget => Object::Budget(BudgetObject::new(0)),
-            ObjectType::Reply => Object::Reply,
-        };
-        Ok(self.insert(object, budget, bytes))
+    /// The object behind `id`, mutably.
+    pub fn get_mut(&mut self, id: ObjectId) -> Option<&mut Object> {
+        self.entries.get_mut(&id).map(|e| &mut e.object)
     }
 
-    /// Dispatches an invoke-facing operation against a live object.
-    pub fn invoke(
-        &mut self,
-        object: ObjectId,
-        method: InvokeMethod,
-    ) -> Result<InvokeResult, ObjectError> {
-        let entry = self.entries.get(&object).ok_or(ObjectError::NotFound)?;
-        match method {
-            InvokeMethod::Describe => Ok(InvokeResult::Description {
-                object_type: entry.object.object_type(),
-                charged_bytes: entry.charged_bytes,
-            }),
-            InvokeMethod::ReadBudget => entry
-                .object
-                .budget()
-                .map(|budget| InvokeResult::Budget {
-                    used_bytes: budget.used_bytes,
-                    limit_bytes: budget.limit_bytes,
-                })
-                .ok_or(ObjectError::InvalidMethod),
-            InvokeMethod::Destroy => {
-                if object == self.root_budget {
-                    return Err(ObjectError::RootBudget);
-                }
-                self.destroy(object)?;
-                Ok(InvokeResult::Destroyed)
-            }
+    /// Bytes charged for `id` and the budget that paid them.
+    pub fn charge_of(&self, id: ObjectId) -> Option<(ObjectId, u64)> {
+        self.entries.get(&id).map(|e| (e.payer, e.charged))
+    }
+
+    /// The budget behind `id`.
+    pub fn budget_mut(&mut self, id: ObjectId) -> Option<&mut Budget> {
+        match self.get_mut(id) {
+            Some(Object::Budget(b)) => Some(b),
+            _ => None,
         }
     }
 
-    /// Destroys an object and credits the budget that paid for it.
-    pub fn destroy(&mut self, object: ObjectId) -> Result<(), ObjectError> {
-        if self.entries.values().any(|entry| entry.budget == object) {
-            return Err(ObjectError::InvalidMethod);
+    /// Ids of every live object, for diagnostics and the IRQ table.
+    pub fn ids(&self) -> impl Iterator<Item = (ObjectId, &Object)> {
+        self.entries.iter().map(|(id, e)| (*id, &e.object))
+    }
+
+    fn charge(&mut self, budget: ObjectId, bytes: u64) -> Result<(), ObjectError> {
+        self.budget_mut(budget)
+            .ok_or(ObjectError::NotFound)?
+            .charge_memory(bytes)
+            .map_err(|_| ObjectError::BudgetExceeded)
+    }
+
+    fn credit(&mut self, budget: ObjectId, bytes: u64) {
+        if let Some(b) = self.budget_mut(budget) {
+            let _ = b.release_memory(bytes);
         }
-        let entry = self.entries.remove(&object).ok_or(ObjectError::NotFound)?;
-        self.credit(entry.budget, entry.charged_bytes);
-        drop(entry);
+    }
+
+    /// Charges `bytes` more to the budget paying for `id` (e.g. a page mapped into an address
+    /// space); the charge is credited back when `id` is destroyed.
+    pub fn charge_more(&mut self, id: ObjectId, bytes: u64) -> Result<(), ObjectError> {
+        let payer = self.entries.get(&id).ok_or(ObjectError::NotFound)?.payer;
+        self.charge(payer, bytes)?;
+        self.entries.get_mut(&id).expect("checked above").charged += bytes;
         Ok(())
     }
 
-    fn insert(&mut self, object: Object, budget: ObjectId, charged_bytes: usize) -> ObjectId {
-        let id = ObjectId(self.next_id);
+    /// Returns `bytes` of an earlier [`Self::charge_more`] (a mapping that failed after all).
+    pub fn uncharge(&mut self, id: ObjectId, bytes: u64) {
+        if let Some(e) = self.entries.get_mut(&id) {
+            e.charged = e.charged.saturating_sub(bytes);
+            let payer = e.payer;
+            self.credit(payer, bytes);
+        }
+    }
+
+    /// Stores `object` paid for by `payer`, charging `bytes`. On failure the object is dropped.
+    pub fn insert(
+        &mut self,
+        payer: ObjectId,
+        object: Object,
+        bytes: u64,
+    ) -> Result<ObjectId, ObjectError> {
+        self.charge(payer, bytes)?;
+        let id = self.next_id;
         self.next_id += 1;
         self.entries.insert(
             id,
             Entry {
                 object,
-                budget,
-                charged_bytes,
+                payer,
+                charged: bytes,
             },
         );
-        id
+        Ok(id)
     }
 
-    fn charge(&mut self, budget: ObjectId, bytes: usize) -> Result<(), ObjectError> {
-        let entry = self.entries.get_mut(&budget).ok_or(ObjectError::NotFound)?;
-        match &mut entry.object {
-            Object::Budget(budget) => budget.charge(bytes),
-            _ => Err(ObjectError::InvalidMethod),
+    /// Charges `payer` for an object of type `ty` and builds its initial state (threads and
+    /// IRQ objects are built by their owners and stored with [`Self::insert`]).
+    pub fn create(&mut self, ty: ObjectType, payer: ObjectId) -> Result<ObjectId, ObjectError> {
+        let bytes = object_bytes(ty);
+        // Charge first so an unfunded request allocates nothing.
+        self.charge(payer, bytes)?;
+        let object = match ty {
+            ObjectType::AddressSpace => AddressSpace::new().map(Object::AddressSpace),
+            ObjectType::Frame => frame::allocate().map(|f| {
+                // SAFETY: the frame was just allocated and is reached through the HHDM, which maps
+                // all usable RAM writable; nothing else references it.
+                unsafe {
+                    core::ptr::write_bytes(
+                        (crate::mm::paging::hhdm_offset() + f.start().as_u64()) as *mut u8,
+                        0,
+                        4096,
+                    );
+                }
+                Object::Frame(FrameObject { frame: f })
+            }),
+            ObjectType::Endpoint => Some(Object::Endpoint(Endpoint::new())),
+            ObjectType::Notification => Some(Object::Notification(Notification::new())),
+            ObjectType::Reply => Some(Object::Reply),
+            ObjectType::Thread | ObjectType::Budget | ObjectType::Irq | ObjectType::IrqControl => {
+                self.credit(payer, bytes);
+                return Err(ObjectError::InvalidMethod);
+            }
+        };
+        let Some(object) = object else {
+            self.credit(payer, bytes);
+            return Err(ObjectError::OutOfMemory);
+        };
+        self.credit(payer, bytes);
+        self.insert(payer, object, bytes)
+    }
+
+    /// Carves a child budget out of `parent`: `cpu_ns` of each period and `memory_bytes`, both
+    /// reserved from what the parent has uncommitted at `now_ns`. The parent also pays for the
+    /// child object itself.
+    pub fn create_budget(
+        &mut self,
+        parent: ObjectId,
+        cpu_ns: u64,
+        memory_bytes: u64,
+        now_ns: u64,
+    ) -> Result<ObjectId, ObjectError> {
+        self.charge(parent, BUDGET_BYTES)?;
+        let parent_budget = self.budget_mut(parent).expect("charged above");
+        let child = match parent_budget.carve_out(cpu_ns, memory_bytes, now_ns) {
+            Ok(child) => child,
+            Err(_) => {
+                self.credit(parent, BUDGET_BYTES);
+                return Err(ObjectError::BudgetExceeded);
+            }
+        };
+        let id = self.next_id;
+        self.next_id += 1;
+        self.entries.insert(
+            id,
+            Entry {
+                object: Object::Budget(child),
+                payer: parent,
+                charged: BUDGET_BYTES,
+            },
+        );
+        Ok(id)
+    }
+
+    /// Whether some live object is paid for by `budget`.
+    pub fn pays_for_anything(&self, budget: ObjectId) -> bool {
+        self.entries
+            .iter()
+            .any(|(id, e)| *id != budget && e.payer == budget)
+    }
+
+    /// Removes `id`, credits its payer (and returns a child budget's reservation), and hands the
+    /// object back so the caller can tear down any external state. Budgets that still pay for
+    /// objects are refused.
+    pub fn remove(&mut self, id: ObjectId) -> Result<Object, ObjectError> {
+        if id == self.root_budget {
+            return Err(ObjectError::RootBudget);
         }
-    }
-
-    fn credit(&mut self, budget: ObjectId, bytes: usize) {
-        if let Some(Entry {
-            object: Object::Budget(budget),
-            ..
-        }) = self.entries.get_mut(&budget)
+        let entry = self.entries.get(&id).ok_or(ObjectError::NotFound)?;
+        if matches!(entry.object, Object::Budget(_)) && self.pays_for_anything(id) {
+            return Err(ObjectError::InUse);
+        }
+        let entry = self.entries.remove(&id).expect("checked above");
+        if let Object::Budget(child) = &entry.object
+            && let Some(parent) = self.budget_mut(entry.payer)
         {
-            budget.credit(bytes);
+            let _ = parent.release_child(child.limits());
         }
+        self.credit(entry.payer, entry.charged);
+        Ok(entry.object)
     }
 }
 
-fn object_bytes(object_type: ObjectType) -> usize {
-    match object_type {
-        ObjectType::Thread => THREAD_BYTES,
-        ObjectType::AddressSpace => ADDRESS_SPACE_BYTES,
-        ObjectType::Frame => FRAME_BYTES,
-        ObjectType::Endpoint => ENDPOINT_BYTES,
-        ObjectType::Notification => NOTIFICATION_BYTES,
-        ObjectType::Budget => BUDGET_BYTES,
-        ObjectType::Reply => REPLY_BYTES,
-    }
+/// The kernel's mutable state: objects, capability spaces and threads.
+pub struct Kernel {
+    /// Every live kernel object.
+    pub objects: ObjectRegistry,
+    /// Every CSpace, sharing one derivation tree.
+    pub caps: CapSpaces,
+    /// Threads and the run queue.
+    pub sched: Scheduler,
+}
+
+static KERNEL: SpinLock<Option<Kernel>> = SpinLock::new(None);
+
+/// Builds the kernel state: a root budget owning the whole CPU and available `memory_bytes`, no
+/// CSpaces, and a scheduler whose current thread is the caller (the boot thread). Frames consumed
+/// by the scheduler's idle stack are deducted from the root budget. Call once, with interrupts
+/// disabled, after the heap is up.
+pub fn init(memory_bytes: u64) {
+    let free_before = frame::stats().0;
+    let sched = Scheduler::new();
+    let scheduler_frames = free_before.saturating_sub(frame::stats().0) as u64;
+    let scheduler_bytes = scheduler_frames * carv_frames::FRAME_SIZE as u64;
+    without_interrupts(|| {
+        *KERNEL.lock() = Some(Kernel {
+            objects: ObjectRegistry::new(
+                CPU_PERIOD_NS,
+                memory_bytes.saturating_sub(scheduler_bytes),
+            ),
+            caps: CapSpaces::new(),
+            sched,
+        });
+    });
+}
+
+/// Whether [`init`] has run.
+pub fn ready() -> bool {
+    without_interrupts(|| KERNEL.lock().is_some())
+}
+
+/// Runs `f` on the kernel state with interrupts disabled and the kernel lock held. Never switch
+/// threads inside `f`: the lock would stay held.
+pub fn with<R>(f: impl FnOnce(&mut Kernel) -> R) -> R {
+    without_interrupts(|| {
+        let mut guard = KERNEL.lock();
+        f(guard.as_mut().expect("kernel state not initialised"))
+    })
+}
+
+/// Like [`with`], but returns `None` instead of panicking before [`init`].
+pub fn try_with<R>(f: impl FnOnce(&mut Kernel) -> R) -> Option<R> {
+    without_interrupts(|| KERNEL.lock().as_mut().map(f))
 }
 
 #[cfg(test)]
@@ -338,20 +423,13 @@ mod tests {
     use super::*;
 
     #[test_case]
-    fn registry_invokes_and_credits_every_object_type() {
-        let mut registry = ObjectRegistry::new(64 * 1024);
+    fn registry_charges_and_credits_every_object_type() {
+        let mut registry = ObjectRegistry::new(CPU_PERIOD_NS, 1 << 20);
+        let root = registry.root_budget();
         let budget = registry
-            .create_budget(registry.root_budget(), 64 * 1024)
+            .create_budget(root, 1_000_000, 512 * 1024, 0)
             .expect("child budget");
-        assert!(matches!(
-            registry.invoke(budget, InvokeMethod::Describe),
-            Ok(InvokeResult::Description {
-                object_type: ObjectType::Budget,
-                charged_bytes: BUDGET_BYTES
-            })
-        ));
         let types = [
-            ObjectType::Thread,
             ObjectType::AddressSpace,
             ObjectType::Frame,
             ObjectType::Endpoint,
@@ -359,74 +437,78 @@ mod tests {
             ObjectType::Reply,
         ];
         let mut objects = alloc::vec::Vec::new();
-        for object_type in types {
-            let object = registry.create(object_type, budget).expect("object");
-            assert_eq!(
-                registry.invoke(object, InvokeMethod::Describe),
-                Ok(InvokeResult::Description {
-                    object_type,
-                    charged_bytes: object_bytes(object_type),
-                })
-            );
-            objects.push(object);
+        for ty in types {
+            let id = registry.create(ty, budget).expect("object");
+            assert_eq!(registry.get(id).map(Object::object_type), Some(ty));
+            assert_eq!(registry.charge_of(id), Some((budget, object_bytes(ty))));
+            objects.push(id);
         }
-        let before = registry
-            .invoke(budget, InvokeMethod::ReadBudget)
-            .expect("budget stats");
-        for object in objects {
-            assert_eq!(
-                registry.invoke(object, InvokeMethod::Destroy),
-                Ok(InvokeResult::Destroyed)
-            );
+        let used: u64 = types.iter().map(|t| object_bytes(*t)).sum();
+        assert_eq!(
+            registry.budget_mut(budget).unwrap().memory_used_bytes(),
+            used
+        );
+        assert_eq!(registry.remove(budget).err(), Some(ObjectError::InUse));
+        for id in objects {
+            registry.remove(id).expect("destroy");
         }
-        assert_eq!(
-            registry.invoke(budget, InvokeMethod::Destroy),
-            Ok(InvokeResult::Destroyed)
-        );
-        let after = registry
-            .invoke(registry.root_budget(), InvokeMethod::ReadBudget)
-            .expect("root budget stats");
-        assert_eq!(
-            after,
-            InvokeResult::Budget {
-                used_bytes: 0,
-                limit_bytes: 64 * 1024
-            }
-        );
-        assert_ne!(before, after);
+        assert_eq!(registry.budget_mut(budget).unwrap().memory_used_bytes(), 0);
+        registry.remove(budget).expect("empty budget");
+        assert_eq!(registry.budget_mut(root).unwrap().memory_used_bytes(), 0);
+        // The reservation came back: the whole root can be carved out again.
+        registry
+            .create_budget(root, CPU_PERIOD_NS, (1 << 20) - 128, CPU_PERIOD_NS)
+            .expect("reservation released");
     }
 
     #[test_case]
-    fn registry_rejects_unfunded_objects_and_dangling_budget_destroy() {
-        let mut registry = ObjectRegistry::new(BUDGET_BYTES);
-        let budget = registry
-            .create_budget(registry.root_budget(), 0)
-            .expect("budget fits exactly");
+    fn child_budgets_never_exceed_their_parent() {
+        let mut registry = ObjectRegistry::new(CPU_PERIOD_NS, 64 * 1024);
+        let root = registry.root_budget();
         assert_eq!(
-            registry.create(ObjectType::Thread, budget),
+            registry.create_budget(root, CPU_PERIOD_NS + 1, 0, 0),
             Err(ObjectError::BudgetExceeded)
         );
-        let object = registry.create(ObjectType::Reply, registry.root_budget());
-        assert!(
-            object.is_err(),
-            "root budget was exhausted by the child budget"
-        );
         assert_eq!(
-            registry.destroy(budget),
-            Ok(()),
-            "an empty child budget can be reclaimed"
+            registry.create_budget(root, 0, 64 * 1024, 0),
+            Err(ObjectError::BudgetExceeded),
+            "the child object itself is charged first"
         );
+        let a = registry
+            .create_budget(root, 7_000_000, 16 * 1024, 0)
+            .unwrap();
+        assert_eq!(
+            registry.create_budget(root, 4_000_000, 0, 0),
+            Err(ObjectError::BudgetExceeded),
+            "only 3 ms of the period is left"
+        );
+        let b = registry.create_budget(a, 2_000_000, 8 * 1024, 0).unwrap();
+        assert_eq!(
+            registry.create_budget(a, 0, 16 * 1024, 0),
+            Err(ObjectError::BudgetExceeded)
+        );
+        assert_eq!(registry.remove(root).err(), Some(ObjectError::RootBudget));
+        registry.remove(b).unwrap();
+        registry.remove(a).unwrap();
     }
 
     #[test_case]
-    fn registry_does_not_destroy_budget_with_live_objects() {
-        let mut registry = ObjectRegistry::new(64 * 1024);
-        let budget = registry
-            .create_budget(registry.root_budget(), 64 * 1024)
-            .expect("child budget");
-        let object = registry.create(ObjectType::Reply, budget).expect("reply");
-        assert_eq!(registry.destroy(budget), Err(ObjectError::InvalidMethod));
-        registry.destroy(object).expect("reply destroy");
-        registry.destroy(budget).expect("budget destroy");
+    fn unfunded_objects_are_refused_without_side_effects() {
+        let mut registry = ObjectRegistry::new(CPU_PERIOD_NS, 128);
+        let root = registry.root_budget();
+        let budget = registry.create_budget(root, 0, 0, 0).expect("fits exactly");
+        let (free_before, _) = frame::stats();
+        assert_eq!(
+            registry.create(ObjectType::Frame, budget),
+            Err(ObjectError::BudgetExceeded)
+        );
+        assert_eq!(frame::stats().0, free_before, "no frame was allocated");
+        assert_eq!(
+            registry.create(ObjectType::Reply, root),
+            Err(ObjectError::BudgetExceeded)
+        );
+        registry
+            .remove(budget)
+            .expect("empty child budget can be reclaimed");
     }
 }

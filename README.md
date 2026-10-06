@@ -92,8 +92,13 @@ CarvOS chisel v0.1.1 booting
   pci: 0000:00:02.0 1af4:1001 class 01.00.00 virtio-blk
   pci: 0000:00:03.0 1af4:1000 class 02.00.00 virtio-net
   frames: 118529 free of 123842 (463 MiB); bitmap 30 KiB at 0x0; self-check ok (0x8000)
-  timer: LAPIC timer ticking at 1 kHz (99 ticks in 100 ms)
-chisel: nothing more to do yet; halting
+  ioapic: 24 inputs masked; GSI n arrives on vector 48 + n
+  objects: root budget owns 459 MiB and the whole CPU; scheduler up (boot + idle threads)
+  timer: LAPIC timer ticking at 1 kHz (98 ticks in 100 ms)
+chisel: starting init (28096 bytes, entry 0x400000) as thread 3
+init: hello from ring 3
+init: created an endpoint via invoke
+init: idle
 ```
 Quit QEMU with `Ctrl-A` then `X`.
 
@@ -103,7 +108,7 @@ Everything goes through `cargo xtask` (a small Rust program in [`xtask/`](xtask/
 
 | Command | What it does |
 |---|---|
-| `cargo xtask build [--release]` | Build the `chisel` kernel for `x86_64-unknown-none` and verify it is linked in the higher half. |
+| `cargo xtask build [--release]` | Build the `chisel` kernel for `x86_64-unknown-none` and verify it is linked in the higher half, then build the ring-3 root task `userland/init` into `target/userland/` (every ISO ships it as the Limine module `boot():/boot/init`). |
 | `cargo xtask image [--release]` | Build a bootable ISO (`target/carv-os.iso`, UEFI + BIOS) and a blank 64 MiB virtio disk (`target/data.img`). `--release` strips debuginfo from the kernel inside the ISO; the unstripped ELF stays in `target/`. |
 | `cargo xtask limine` | Fetch and verify the pinned Limine bootloader files (done automatically by `image`). |
 | `cargo xtask run [flags]` | Build the image and boot it in QEMU with the serial console on your terminal. `--iso PATH` boots an existing image (e.g. a release) instead. |

@@ -7,6 +7,19 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Added
+- P2.4–P2.9 completed (#59–#64): kernel objects with state in one registry behind `invoke`
+  (`BUDGET_CREATE`/`DESTROY` for every type, child budgets carved out with `carv-budget`); the
+  kernel heap charges its own Budget on every allocation; `syscall` entry with per-thread kernel
+  stacks (guard pages), `sysretq`/`iretq`, context switch and EFER.SCE; a preemptive budgeted
+  round-robin scheduler (30/70 test measures 31/69); blocking IPC send/recv/call/reply_recv on the
+  `carv_abi::Message` layout with ping-pong latency printed; I/O APIC driver with `IrqControl`/`Irq`
+  capabilities routing GSIs to Notifications; `userland/init`, built by `cargo xtask build` and
+  loaded from a Limine module, runs in ring 3 with its root CSpace. Smoke and perf now wait for
+  `init: idle` instead of `halting`. ABI v1 addendum (syscall results, `invoke` methods, root
+  CSpace, `debug_putc` in all builds) proposed in ADR-0003. 42 in-kernel tests. Review fixes
+  preserve per-thread x87/SSE state, enforce transfer GRANT on attached capabilities, reject
+  unsupported level-triggered IRQs, and account for page-table frames, the idle stack, and ELF
+  mappings before use.
 - P2.9: in-kernel tests for `kernel/src/elf.rs` (#64): a valid image is accepted and non-load
   headers skipped; truncated, non-x86-64 and out-of-bounds program-header tables, W+X, overrun,
   wrapping, misaligned and overlapping segments, an entry point outside an executable segment and
@@ -68,6 +81,9 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   (`oom-test` on the cmdline) proves it.
 
 ### Fixed
+- #141: IPC capability transfer now needs `GRANT` and installs the receiver's copy as a child of
+  the sender's capability in a cross-CSpace derivation tree (`carv_caps::CapSpaces`), so revoke
+  removes it.
 - `carv-caps` reclaims derivation nodes (#142): deleting a capability splices its node out of the
   tree and hands its children to its parent (so revoking an ancestor still reaches them), revoked
   nodes are freed, and freed nodes are reused. A CSpace never holds more nodes than slots
