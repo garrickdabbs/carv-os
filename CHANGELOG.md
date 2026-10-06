@@ -7,6 +7,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Added
+- P2.9: in-kernel tests for `kernel/src/elf.rs` (#64): a valid image is accepted and non-load
+  headers skipped; truncated, non-x86-64 and out-of-bounds program-header tables, W+X, overrun,
+  wrapping, misaligned and overlapping segments, an entry point outside an executable segment and
+  too many segments are rejected; `map_into` maps page-rounded ranges, copies exact file bytes and
+  reports mapper failures. Nothing calls the loader at boot yet.
 - P2.9/P2.10: allocation-free `no_std` ELF64 validation and segment-mapping abstractions for a
   Limine root-task module (untested and not yet called: there is no module request or `init`
   binary), plus ADR-0002 and the frozen ABI v1 contract. Ring-3 address-space integration remains
@@ -14,8 +19,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - P2.5/P2.6 (foundations only, nothing runs in ring 3 yet): kernel ring-3 selector and
   user-context abstractions, syscall MSR setup (STAR/LSTAR/SFMASK) and CR4 SMEP/SMAP. The syscall
   entry point only halts, EFER.SCE is not set, and there is no context switch. A budget-aware
-  round-robin scheduler *model* is ticked by the LAPIC timer, but it holds no threads at runtime,
-  never switches, and does its own refill math instead of using `carv-budget`.
+  round-robin scheduler *model* is ticked by the LAPIC timer and uses `carv-budget`, but it holds no
+  threads at runtime and never switches.
 - P2.7/P2.8 (foundations only, exercised by in-kernel tests rather than by user threads):
   non-blocking endpoint send/recv/call/reply queues, badge-bearing messages with capability
   transfer, notification signal/wait words, and a GSI-to-notification router that is not yet
@@ -63,13 +68,27 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   (`oom-test` on the cmdline) proves it.
 
 ### Fixed
+- `carv-caps` reclaims derivation nodes (#142): deleting a capability splices its node out of the
+  tree and hands its children to its parent (so revoking an ancestor still reaches them), revoked
+  nodes are freed, and freed nodes are reused. A CSpace never holds more nodes than slots
+  (`CSpace::node_count`, storage reserved in `CSpace::new`); first-child/next-sibling links and a
+  preallocated traversal stack prevent allocations during derivation and revocation. `revoke` clears
+  slots through a node-to-slot link instead of scanning every slot per descendant. Tests: 10 000
+  copy/delete cycles and a 10 000-link deleted chain stay bounded, broad revocation uses reserved
+  storage, and a proptest checks revocation through deleted links against a model.
+- P2.6 (#61): the scheduler model keeps each thread's CPU allowance in a `carv_budget::Budget`
+  instead of its own copy of the refill math (the kernel now depends on `carv-budget`);
+  `Thread::new` returns the budget error for a zero period or an allowance above its period, and
+  `Thread::with_budget` accepts a carved-out budget. A new in-kernel test checks 20%/50% threads
+  are throttled once their allowances are spent and refilled on the period boundary.
 - P2.5 (#140): the GDT now places user data 8 bytes below user code, so `sysretq` loads SS from the
   user data descriptor instead of the upper half of the TSS descriptor; STAR is programmed with
   `Star::write`, which panics at boot on an incompatible layout, and an in-kernel test checks that
   STAR decodes back to the GDT selectors. LSTAR and SFMASK use the crate's typed writers too, which
   removes the `unsafe` block from `syscall::init`.
 - P2.6: correct the scheduler kernel test to account for the initial dispatch not charging a thread;
-  verify round-robin skips it only after its budget is exhausted.
+  verify round-robin skips it only after its budget is exhausted; charge each quantum before
+  advancing time so a boundary quantum is not deducted from the next period.
 - `cargo xtask image` pins the ISO's volume id (`CARVOS`), application id (`CarvOS`) and preparer id: without
   them xorriso writes its own version string into the volume descriptors, the one remaining difference (16 bytes)
   between a Fedora build and the runner's `v0.1.1-rc.1` image (kernel ELF and every file were already identical).

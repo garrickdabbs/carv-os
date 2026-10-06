@@ -95,6 +95,7 @@ version = "0.1.1"
 dependencies = [
  "acpi",
  "carv-abi",
+ "carv-budget",
  "carv-caps",
  "carv-frames",
  "limine",

@@ -17,6 +17,7 @@ bench = false
 [dependencies]
 acpi = { version = "6", default-features = false, features = ["alloc", "aml"] }
 carv-abi = { path = "../crates/carv-abi" }
+carv-budget = { path = "../crates/carv-budget" }
 carv-caps = { path = "../crates/carv-caps" }
 carv-frames = { path = "../crates/carv-frames" }
 limine = "0.6.5"

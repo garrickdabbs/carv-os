@@ -151,12 +151,34 @@ fn user_context_starts_with_safe_flags() {
 #[test_case]
 fn scheduler_round_robin_skips_throttled_threads() {
     let mut scheduler = crate::scheduler::Scheduler::new();
-    scheduler.add(crate::scheduler::Thread::new(1, 2_000_000, 10_000_000, 0));
-    scheduler.add(crate::scheduler::Thread::new(2, 8_000_000, 10_000_000, 0));
+    scheduler.add(crate::scheduler::Thread::new(1, 2_000_000, 10_000_000, 0).unwrap());
+    scheduler.add(crate::scheduler::Thread::new(2, 8_000_000, 10_000_000, 0).unwrap());
     assert_eq!(scheduler.tick(1_000_000), Some(1));
     assert_eq!(scheduler.tick(1_000_000), Some(2));
     assert_eq!(scheduler.tick(1_000_000), Some(1));
     assert_eq!(scheduler.tick(1_000_000), Some(2));
+}
+
+#[test_case]
+fn scheduler_throttles_and_refills_through_carv_budget() {
+    use crate::scheduler::{Scheduler, Thread};
+    assert!(Thread::new(9, 2, 1, 0).is_err(), "budget above its period");
+    assert!(Thread::new(9, 0, 0, 0).is_err(), "zero period");
+
+    // 20%/50% of a 10 ms period, 1 ms quanta: tick N charges the thread picked by tick N-1
+    // (the first dispatch is not charged), so both allowances are spent after seven ticks.
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Thread::new(1, 2_000_000, 10_000_000, 0).unwrap());
+    scheduler.add(Thread::new(2, 5_000_000, 10_000_000, 0).unwrap());
+    let picks: alloc::vec::Vec<_> = (0..7).map(|_| scheduler.tick(1_000_000)).collect();
+    let ones = picks.iter().filter(|p| **p == Some(1)).count();
+    let twos = picks.iter().filter(|p| **p == Some(2)).count();
+    assert_eq!((ones, twos), (2, 5), "picks {:?}", picks);
+    // Both threads are throttled for the rest of the period.
+    assert_eq!(scheduler.tick(1_000_000), None);
+    assert_eq!(scheduler.tick(1_000_000), None);
+    // The tenth tick lands on the 10 ms boundary, so both budgets refill.
+    assert_eq!(scheduler.tick(1_000_000), Some(1));
 }
 
 /// Scratch space for the frame test; 10k indexes is too big for the 64 KiB boot stack.
