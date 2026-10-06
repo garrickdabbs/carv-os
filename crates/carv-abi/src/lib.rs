@@ -150,6 +150,113 @@ impl MessageInfo {
     }
 }
 
+/// Kernel object types, as reported by [`method::DESCRIBE`] and requested by
+/// [`method::BUDGET_CREATE`] (ADR-0003).
+#[repr(u64)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjectType {
+    /// An execution context.
+    Thread = 1,
+    /// A user page-table root.
+    AddressSpace = 2,
+    /// One physical 4 KiB frame.
+    Frame = 3,
+    /// A synchronous IPC endpoint.
+    Endpoint = 4,
+    /// An asynchronous signal word.
+    Notification = 5,
+    /// A CPU and memory account.
+    Budget = 6,
+    /// A one-shot IPC reply object.
+    Reply = 7,
+    /// One hardware interrupt line (global system interrupt).
+    Irq = 8,
+    /// The authority to create [`ObjectType::Irq`] capabilities.
+    IrqControl = 9,
+}
+
+impl ObjectType {
+    /// Converts a raw object type, rejecting values not defined by this ABI.
+    pub const fn from_raw(raw: u64) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Thread),
+            2 => Some(Self::AddressSpace),
+            3 => Some(Self::Frame),
+            4 => Some(Self::Endpoint),
+            5 => Some(Self::Notification),
+            6 => Some(Self::Budget),
+            7 => Some(Self::Reply),
+            8 => Some(Self::Irq),
+            9 => Some(Self::IrqControl),
+            _ => None,
+        }
+    }
+}
+
+/// `invoke` method numbers (ADR-0003). `invoke(cap, method, a0, a1, a2, a3)` takes the capability
+/// slot in `rdi`, the method in `rsi` and arguments in `rdx, r10, r8, r9`; it returns the status in
+/// `rax` and results in `rdx` and `rsi`.
+pub mod method {
+    /// Any object: returns the [`super::ObjectType`] in `rdx`. Needs no right.
+    pub const DESCRIBE: u64 = 0;
+    /// Any object except the root budget: destroys it and credits its budget. Needs `WRITE`.
+    /// Destroying one's own thread ends it.
+    pub const DESTROY: u64 = 1;
+    /// Budget: returns memory bytes used in `rdx` and the memory limit in `rsi`. Needs `READ`.
+    pub const BUDGET_READ: u64 = 2;
+    /// Budget: creates an object of type `a0` charged to this budget and installs a capability
+    /// with all rights in the caller's empty slot `a1`. For a child budget, `a2` is its CPU
+    /// allowance per period (ns) and `a3` its memory limit (bytes), both carved out of this
+    /// budget. Needs `WRITE`.
+    pub const BUDGET_CREATE: u64 = 3;
+    /// Thread (not yet started): starts it at `rip = a0`, `rsp = a1` with `rdi = a2`, sharing the
+    /// caller's CSpace, in the address space named by slot `a3` (or the caller's own when
+    /// `a3 == u64::MAX`). Needs `WRITE`.
+    pub const THREAD_START: u64 = 4;
+    /// Address space: maps a fresh zeroed frame at page `a0` with [`map`] flags `a1`, charged to
+    /// the address space's budget. Needs `WRITE`.
+    pub const ADDRESS_SPACE_MAP: u64 = 5;
+    /// IRQ control: creates an [`super::ObjectType::Irq`] capability for global system interrupt
+    /// `a0` in the caller's empty slot `a1`. Needs `WRITE`.
+    pub const IRQ_CONTROL_GET: u64 = 6;
+    /// Irq: delivers the interrupt to the notification in slot `a0` (which needs `WRITE`) and
+    /// unmasks the line. Needs `WRITE`.
+    pub const IRQ_BIND: u64 = 7;
+    /// Irq: masks the line and drops its notification. Needs `WRITE`.
+    pub const IRQ_UNBIND: u64 = 8;
+}
+
+/// Flags for [`method::ADDRESS_SPACE_MAP`]. Writable and executable together are rejected (W^X).
+pub mod map {
+    /// The page is writable.
+    pub const WRITE: u64 = 1 << 0;
+    /// The page is executable.
+    pub const EXEC: u64 = 1 << 1;
+}
+
+/// Layout of the root task's initial CSpace and stack (ADR-0003).
+pub mod init {
+    /// Number of slots in the root task's CSpace.
+    pub const CSPACE_SLOTS: usize = 64;
+    /// Slot holding the root budget (the system's untyped authority).
+    pub const ROOT_BUDGET: u64 = 0;
+    /// Slot holding the root task's own thread.
+    pub const THREAD: u64 = 1;
+    /// Slot holding the root task's own address space.
+    pub const ADDRESS_SPACE: u64 = 2;
+    /// Slot holding the IRQ control capability.
+    pub const IRQ_CONTROL: u64 = 3;
+    /// First empty slot.
+    pub const FIRST_FREE: u64 = 4;
+    /// Top of the root task's initial stack (exclusive); `STACK_PAGES` pages are mapped below it.
+    pub const STACK_TOP: u64 = 0x0000_7fff_0000_0000;
+    /// Pages of initial stack.
+    pub const STACK_PAGES: u64 = 4;
+}
+
+/// First address past the user half of every address space; user pages lie below it.
+pub const USER_TOP: u64 = 0x0000_7fff_ffff_f000;
+
 /// Permissions attached to a capability.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -235,5 +342,16 @@ mod tests {
         assert_eq!((Rights::READ | Rights::WRITE).bits(), 3);
         assert!(Rights::ALL.contains(Rights::REVOKE));
         assert!(Rights::from_bits(0x40).is_none());
+    }
+
+    #[test]
+    fn object_types_and_methods_are_stable() {
+        assert_eq!(ObjectType::from_raw(1), Some(ObjectType::Thread));
+        assert_eq!(ObjectType::from_raw(9), Some(ObjectType::IrqControl));
+        assert_eq!(ObjectType::from_raw(0), None);
+        assert_eq!(ObjectType::from_raw(10), None);
+        assert_eq!(method::IRQ_UNBIND, 8);
+        assert_eq!(init::FIRST_FREE, 4);
+        const { assert!(init::STACK_TOP <= USER_TOP) };
     }
 }

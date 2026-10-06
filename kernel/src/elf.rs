@@ -28,7 +28,7 @@ pub struct Module<'a> {
 }
 
 /// A validated ELF load segment.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct LoadSegment {
     /// Virtual address at which the segment starts.
     pub virtual_address: u64,

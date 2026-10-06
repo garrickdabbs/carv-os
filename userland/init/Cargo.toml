@@ -1,0 +1,12 @@
+[package]
+name = "init"
+description = "Minimal ring-3 root task for CarvOS"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+build = "build.rs"
+
+[target.'cfg(target_os = "none")'.dependencies]
+carv-abi = { path = "../../crates/carv-abi" }

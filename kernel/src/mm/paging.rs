@@ -21,6 +21,8 @@ use x86_64::structures::paging::{
 };
 use x86_64::{PhysAddr, VirtAddr};
 
+use core::sync::atomic::{AtomicU64, Ordering};
+
 use super::frame::{self, Frame};
 use crate::sync::{SpinLock, without_interrupts};
 
@@ -86,9 +88,12 @@ impl core::fmt::Display for UnmapFail {
 }
 
 static MAPPER: SpinLock<Option<OffsetPageTable<'static>>> = SpinLock::new(None);
+/// HHDM offset and the kernel's level-4 table, recorded by [`init`] for user address spaces.
+static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
+static KERNEL_ROOT: AtomicU64 = AtomicU64::new(0);
 
 /// Adapts the frame allocator for page-table frames.
-struct FrameSource;
+pub(super) struct FrameSource;
 
 // SAFETY: `frame::allocate` only ever returns frames that are usable RAM and not handed out to
 // anyone else, which is exactly the contract `FrameAllocator` requires.
@@ -126,6 +131,8 @@ pub fn in_dynamic_region(page: Page<Size4KiB>) -> bool {
 /// through the HHDM for the rest of the kernel's life.
 pub unsafe fn init(hhdm_offset: u64) {
     let (l4_frame, _) = Cr3::read();
+    HHDM_OFFSET.store(hhdm_offset, Ordering::Relaxed);
+    KERNEL_ROOT.store(l4_frame.start_address().as_u64(), Ordering::Relaxed);
     let l4_virt = hhdm_offset + l4_frame.start_address().as_u64();
     // SAFETY: the caller guarantees the HHDM mapping, so this points at the live level-4 table;
     // we take the only reference to it for the kernel's lifetime.
@@ -134,6 +141,17 @@ pub unsafe fn init(hhdm_offset: u64) {
     // the mapper needs to reach every lower-level table.
     let mapper = unsafe { OffsetPageTable::new(l4, VirtAddr::new(hhdm_offset)) };
     without_interrupts(|| *MAPPER.lock() = Some(mapper));
+}
+
+/// The HHDM offset recorded by [`init`]: physical address `p` is mapped at `hhdm_offset() + p`.
+pub fn hhdm_offset() -> u64 {
+    HHDM_OFFSET.load(Ordering::Relaxed)
+}
+
+/// The kernel's own level-4 table (the bootloader's, adopted by [`init`]). Kernel threads run on
+/// it, and every user address space copies its upper half.
+pub fn kernel_root() -> PhysFrame {
+    PhysFrame::containing_address(PhysAddr::new(KERNEL_ROOT.load(Ordering::Relaxed)))
 }
 
 /// Maps `page` (inside the dynamic region) to `frame` with `flags`, allocating intermediate

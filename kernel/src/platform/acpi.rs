@@ -51,6 +51,19 @@ pub struct IoApic {
     pub gsi_base: u32,
 }
 
+/// An ISA interrupt rerouted by the MADT (e.g. PIT IRQ 0 → GSI 2 on most PCs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IsaOverride {
+    /// ISA IRQ number.
+    pub isa_irq: u8,
+    /// Global system interrupt it is wired to.
+    pub gsi: u32,
+    /// Active-low input (ISA default: active high).
+    pub active_low: bool,
+    /// Level-triggered input (ISA default: edge).
+    pub level: bool,
+}
+
 /// What the tables said; kept for the rest of the kernel's life.
 #[derive(Clone, Debug, Default)]
 pub struct Summary {
@@ -70,6 +83,25 @@ pub struct Summary {
     pub hpet_base: Option<u64>,
     /// PCIe ECAM regions from the MCFG.
     pub ecam: Vec<EcamRegion>,
+    /// ISA interrupt source overrides from the MADT.
+    pub isa_overrides: Vec<IsaOverride>,
+}
+
+impl Summary {
+    /// The global system interrupt ISA `irq` arrives on, with its polarity and trigger mode
+    /// (identity-mapped, active-high, edge-triggered unless the MADT overrides it).
+    pub fn isa_irq(&self, irq: u8) -> IsaOverride {
+        self.isa_overrides
+            .iter()
+            .copied()
+            .find(|o| o.isa_irq == irq)
+            .unwrap_or(IsaOverride {
+                isa_irq: irq,
+                gsi: u32::from(irq),
+                active_low: false,
+                level: false,
+            })
+    }
 }
 
 static SUMMARY: SpinLock<Option<Summary>> = SpinLock::new(None);
@@ -280,6 +312,19 @@ pub fn init(rsdp: u64, hhdm: u64) -> Summary {
                 id: io.id,
                 address: io.address,
                 gsi_base: io.global_system_interrupt_base,
+            })
+            .collect();
+        summary.isa_overrides = apic
+            .interrupt_source_overrides
+            .iter()
+            .map(|o| IsaOverride {
+                isa_irq: o.isa_source,
+                gsi: o.global_system_interrupt,
+                active_low: matches!(o.polarity, acpi::platform::interrupt::Polarity::ActiveLow),
+                level: matches!(
+                    o.trigger_mode,
+                    acpi::platform::interrupt::TriggerMode::Level
+                ),
             })
             .collect();
     }
