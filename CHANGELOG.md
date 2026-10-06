@@ -19,8 +19,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - P2.5/P2.6 (foundations only, nothing runs in ring 3 yet): kernel ring-3 selector and
   user-context abstractions, syscall MSR setup (STAR/LSTAR/SFMASK) and CR4 SMEP/SMAP. The syscall
   entry point only halts, EFER.SCE is not set, and there is no context switch. A budget-aware
-  round-robin scheduler *model* is ticked by the LAPIC timer, but it holds no threads at runtime,
-  never switches, and does its own refill math instead of using `carv-budget`.
+  round-robin scheduler *model* is ticked by the LAPIC timer and uses `carv-budget`, but it holds no
+  threads at runtime and never switches.
 - P2.7/P2.8 (foundations only, exercised by in-kernel tests rather than by user threads):
   non-blocking endpoint send/recv/call/reply queues, badge-bearing messages with capability
   transfer, notification signal/wait words, and a GSI-to-notification router that is not yet
@@ -71,10 +71,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 - `carv-caps` reclaims derivation nodes (#142): deleting a capability splices its node out of the
   tree and hands its children to its parent (so revoking an ancestor still reaches them), revoked
   nodes are freed, and freed nodes are reused. A CSpace never holds more nodes than slots
-  (`CSpace::node_count`, storage reserved in `CSpace::new`), and `revoke` clears slots through a
-  node-to-slot link instead of scanning every slot per descendant. Tests: 10 000 copy/delete cycles
-  and a 10 000-link deleted chain stay bounded, and a proptest checks revocation through deleted
-  links against a model.
+  (`CSpace::node_count`, storage reserved in `CSpace::new`); first-child/next-sibling links and a
+  preallocated traversal stack prevent allocations during derivation and revocation. `revoke` clears
+  slots through a node-to-slot link instead of scanning every slot per descendant. Tests: 10 000
+  copy/delete cycles and a 10 000-link deleted chain stay bounded, broad revocation uses reserved
+  storage, and a proptest checks revocation through deleted links against a model.
 - P2.6 (#61): the scheduler model keeps each thread's CPU allowance in a `carv_budget::Budget`
   instead of its own copy of the refill math (the kernel now depends on `carv-budget`);
   `Thread::new` returns the budget error for a zero period or an allowance above its period, and
@@ -86,7 +87,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   STAR decodes back to the GDT selectors. LSTAR and SFMASK use the crate's typed writers too, which
   removes the `unsafe` block from `syscall::init`.
 - P2.6: correct the scheduler kernel test to account for the initial dispatch not charging a thread;
-  verify round-robin skips it only after its budget is exhausted.
+  verify round-robin skips it only after its budget is exhausted; charge each quantum before
+  advancing time so a boundary quantum is not deducted from the next period.
 - `cargo xtask image` pins the ISO's volume id (`CARVOS`), application id (`CarvOS`) and preparer id: without
   them xorriso writes its own version string into the volume descriptors, the one remaining difference (16 bytes)
   between a Fedora build and the runner's `v0.1.1-rc.1` image (kernel ELF and every file were already identical).

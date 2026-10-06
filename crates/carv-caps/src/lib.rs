@@ -118,7 +118,8 @@ struct Node {
     capability: Capability,
     slot: usize,
     parent: Option<usize>,
-    children: Vec<usize>,
+    first_child: Option<usize>,
+    next_sibling: Option<usize>,
 }
 
 /// A capability space with stable slots and a derivation tree.
@@ -131,6 +132,7 @@ pub struct CSpace {
     slots: Vec<Option<usize>>,
     nodes: Vec<Node>,
     free: Vec<usize>,
+    pending: Vec<usize>,
 }
 
 impl CSpace {
@@ -142,6 +144,7 @@ impl CSpace {
             slots: vec![None; slot_count],
             nodes: Vec::with_capacity(slot_count),
             free: Vec::with_capacity(slot_count),
+            pending: Vec::with_capacity(slot_count),
         }
     }
 
@@ -150,9 +153,9 @@ impl CSpace {
         self.slots.len()
     }
 
-    /// Returns the number of derivation-tree nodes allocated, never more than [`Self::capacity`].
+    /// Returns the number of live derivation-tree nodes, never more than [`Self::capacity`].
     pub fn node_count(&self) -> usize {
-        self.nodes.len()
+        self.nodes.len() - self.free.len()
     }
 
     /// Returns the live capability in `slot`.
@@ -256,11 +259,21 @@ impl CSpace {
             return Err(CSpaceError::MissingAuthority);
         }
 
-        let mut pending = core::mem::take(&mut self.nodes[source_node].children);
-        while let Some(node) = pending.pop() {
-            pending.append(&mut self.nodes[node].children);
+        self.pending.clear();
+        let mut child = self.nodes[source_node].first_child.take();
+        while let Some(node) = child {
+            child = self.nodes[node].next_sibling;
+            self.pending.push(node);
+        }
+        while let Some(node) = self.pending.pop() {
+            let mut child = self.nodes[node].first_child.take();
+            while let Some(descendant) = child {
+                child = self.nodes[descendant].next_sibling;
+                self.pending.push(descendant);
+            }
             self.slots[self.nodes[node].slot] = None;
             self.nodes[node].parent = None;
+            self.nodes[node].next_sibling = None;
             self.free.push(node);
         }
         Ok(())
@@ -274,16 +287,49 @@ impl CSpace {
         let node = self.slot_node(slot)?;
         self.slots[slot] = None;
         let parent = self.nodes[node].parent.take();
-        let children = core::mem::take(&mut self.nodes[node].children);
-        for &child in &children {
-            self.nodes[child].parent = parent;
-        }
+        let children = self.nodes[node].first_child.take();
+        let next_sibling = self.nodes[node].next_sibling;
         if let Some(parent) = parent {
-            let siblings = &mut self.nodes[parent].children;
-            if let Some(position) = siblings.iter().position(|&sibling| sibling == node) {
-                siblings.swap_remove(position);
+            let mut previous = None;
+            let mut sibling = self.nodes[parent].first_child;
+            while let Some(index) = sibling {
+                if index == node {
+                    break;
+                }
+                previous = Some(index);
+                sibling = self.nodes[index].next_sibling;
             }
-            siblings.extend_from_slice(&children);
+            assert_eq!(sibling, Some(node));
+            let replacement = if let Some(first_child) = children {
+                let mut child = first_child;
+                loop {
+                    self.nodes[child].parent = Some(parent);
+                    match self.nodes[child].next_sibling {
+                        Some(next) => child = next,
+                        None => {
+                            self.nodes[child].next_sibling = next_sibling;
+                            break;
+                        }
+                    }
+                }
+                Some(first_child)
+            } else {
+                next_sibling
+            };
+            if let Some(previous) = previous {
+                self.nodes[previous].next_sibling = replacement;
+            } else {
+                self.nodes[parent].first_child = replacement;
+            }
+        } else if let Some(mut child) = children {
+            loop {
+                self.nodes[child].parent = None;
+                let next = self.nodes[child].next_sibling.take();
+                let Some(next) = next else {
+                    break;
+                };
+                child = next;
+            }
         }
         self.free.push(node);
         Ok(self.nodes[node].capability)
@@ -307,14 +353,12 @@ impl CSpace {
             capability,
             slot,
             parent,
-            children: Vec::new(),
+            first_child: None,
+            next_sibling: None,
         };
         let node = match self.free.pop() {
             Some(node) => {
-                // Reuse the old child vector's allocation.
-                let mut children = core::mem::take(&mut self.nodes[node].children);
-                children.clear();
-                self.nodes[node] = Node { children, ..fresh };
+                self.nodes[node] = fresh;
                 node
             }
             None => {
@@ -323,7 +367,8 @@ impl CSpace {
             }
         };
         if let Some(parent) = parent {
-            self.nodes[parent].children.push(node);
+            self.nodes[node].next_sibling = self.nodes[parent].first_child;
+            self.nodes[parent].first_child = Some(node);
         }
         self.slots[slot] = Some(node);
     }
@@ -410,12 +455,37 @@ mod tests {
     #[test]
     fn copy_delete_cycles_keep_node_count_bounded() {
         let mut cspace = CSpace::new(2);
+        assert_eq!(cspace.nodes.capacity(), 2);
+        assert_eq!(cspace.free.capacity(), 2);
+        assert_eq!(cspace.pending.capacity(), 2);
         cspace.insert(0, 1, Rights::ALL, 0).unwrap();
         for _ in 0..10_000 {
             cspace.copy(0, 1, Rights::READ).unwrap();
             cspace.delete(1).unwrap();
         }
         assert!(cspace.node_count() <= cspace.capacity());
+        assert_eq!(cspace.nodes.capacity(), 2);
+        assert_eq!(cspace.pending.capacity(), 2);
+    }
+
+    #[test]
+    fn broad_revocation_uses_reserved_storage() {
+        const SLOTS: usize = 256;
+        let mut cspace = CSpace::new(SLOTS);
+        cspace.insert(0, 1, Rights::ALL, 0).unwrap();
+        for slot in 1..SLOTS {
+            cspace.copy(0, slot, Rights::READ).unwrap();
+        }
+
+        cspace.revoke(0).unwrap();
+
+        assert_eq!(cspace.node_count(), 1);
+        assert_eq!(cspace.nodes.capacity(), SLOTS);
+        assert_eq!(cspace.free.capacity(), SLOTS);
+        assert_eq!(cspace.pending.capacity(), SLOTS);
+        for slot in 1..SLOTS {
+            assert_eq!(cspace.get(slot), Err(CSpaceError::EmptySlot));
+        }
     }
 
     #[test]

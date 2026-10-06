@@ -79,10 +79,10 @@ impl Scheduler {
 
     /// Charges one timer quantum and selects the next eligible thread.
     pub fn tick(&mut self, quantum_ns: u64) -> Option<u64> {
-        self.now_ns = self.now_ns.saturating_add(quantum_ns);
         if let Some(i) = self.current {
             self.threads[i].charge(quantum_ns, self.now_ns);
         }
+        self.now_ns = self.now_ns.saturating_add(quantum_ns);
 
         for offset in 1..=self.threads.len() {
             let i = self
@@ -109,4 +109,17 @@ impl Scheduler {
 /// Accounts one APIC quantum and advances the runnable queue.
 pub fn timer_tick() {
     let _ = SCHEDULER.lock().tick(1_000_000);
+}
+
+#[cfg(test)]
+#[test_case]
+fn tick_charges_before_refilling_at_period_boundary() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Thread::new(1, 9, 10, 0).unwrap());
+
+    for _ in 0..10 {
+        assert_eq!(scheduler.tick(1), Some(1));
+    }
+
+    assert_eq!(scheduler.threads[0].budget.cpu_remaining_ns(), 9);
 }
