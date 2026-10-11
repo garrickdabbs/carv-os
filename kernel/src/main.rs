@@ -5,8 +5,9 @@
 //! exception prints a message (double faults on their own IST stack), builds the physical frame
 //! allocator from the memory map (P1.2), adopts the bootloader's page tables for
 //! map/unmap/translate (P1.3), backs `alloc` with a 1 MiB kernel heap (P1.4), masks the legacy
-//! PICs (P1.5), parses the ACPI tables into a platform summary (P1.6), and enumerates PCI(e)
-//! through the MCFG's ECAM window (P1.7). Phase 2 then masks every I/O APIC input, builds the
+//! PICs (P1.5), parses the ACPI tables into a platform summary and uses its HPET to calibrate the
+//! LAPIC timer (P1.6), then enumerates PCI(e) through the MCFG's ECAM window (P1.7). Phase 2 masks
+//! every I/O APIC input and builds the
 //! kernel object state (root budget, CSpaces, scheduler with the boot and idle threads). In test
 //! builds (`cargo xtask test --kernel`) `kmain` then runs the in-kernel tests instead of the rest
 //! of this sequence: `test::runner` exits QEMU directly and never returns; tests that need time
@@ -180,21 +181,34 @@ extern "C" fn kmain() -> ! {
             heap.used
         );
         arch::x86_64::pic::remap_and_mask();
-        let apic = arch::x86_64::apic::init();
-        kprintln!(
-            "  apic: xAPIC id {} at {:#x} (mapped at {:#x}); timer {} ticks/ms (÷16), periodic at {} Hz on vector {}; PICs masked",
-            apic.id,
-            apic.phys_base,
-            mm::paging::KERNEL_MMIO_BASE,
-            apic.ticks_per_ms,
-            arch::x86_64::apic::TIMER_HZ,
-            arch::x86_64::apic::TIMER_VECTOR
-        );
         let rsdp = RSDP
             .response()
             .expect("Limine did not provide the RSDP; ACPI is required")
             .address as u64;
         let acpi = platform::acpi::init(rsdp, hhdm);
+        let hpet = acpi.hpet_base.map(arch::x86_64::hpet::Hpet::init);
+        let apic = arch::x86_64::apic::init(hpet.as_ref());
+        match apic.hpet_ticks_per_ms {
+            Some(hpet_ticks) => kprintln!(
+                "  apic: xAPIC id {} at {:#x} (mapped at {:#x}); timer {} ticks/ms (÷16, HPET; PIT reference {} ticks/ms), periodic at {} Hz on vector {}; PICs masked",
+                apic.id,
+                apic.phys_base,
+                mm::paging::KERNEL_MMIO_BASE,
+                hpet_ticks,
+                apic.pit_ticks_per_ms,
+                arch::x86_64::apic::TIMER_HZ,
+                arch::x86_64::apic::TIMER_VECTOR
+            ),
+            None => kprintln!(
+                "  apic: xAPIC id {} at {:#x} (mapped at {:#x}); timer {} ticks/ms (÷16, PIT fallback), periodic at {} Hz on vector {}; PICs masked",
+                apic.id,
+                apic.phys_base,
+                mm::paging::KERNEL_MMIO_BASE,
+                apic.ticks_per_ms,
+                arch::x86_64::apic::TIMER_HZ,
+                arch::x86_64::apic::TIMER_VECTOR
+            ),
+        }
         kprintln!(
             "  acpi: RSDP at {:#x} (revision {}), {} tables: {}",
             acpi.rsdp,

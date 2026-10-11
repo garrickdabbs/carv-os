@@ -35,7 +35,8 @@ byte-for-byte reproducible on any machine. Today CarvOS boots under Limine on UE
 order: brings up the serial console, loads a GDT/TSS/IDT with a handler for every CPU exception,
 builds a physical frame allocator from the memory map, adopts the bootloader's page tables with its
 own mapper, installs a 1 MiB kernel heap (`alloc` works), masks the legacy PICs and runs the local
-APIC timer at 1 kHz, parses the ACPI tables (MADT, HPET, MCFG), enumerates PCI(e) through ECAM
+APIC timer at 1 kHz (calibrated against the ACPI HPET, with a PIT fallback), parses the ACPI tables
+(MADT, HPET, MCFG), enumerates PCI(e) through ECAM
 (virtio-blk and virtio-net are found), then idles. Twenty-two in-kernel tests and seven boot scenarios
 (UEFI, BIOS, panic, double fault, page fault, stack overflow, heap exhaustion) run on every PR.
 
@@ -83,7 +84,7 @@ CarvOS chisel v0.1.1 booting
   memory map: 33 entries, 463 MiB usable
   paging: adopted CR3 tables; kernel dynamic region at 0xffff900000000000
   heap: 1024 KiB at 0xffff900010000000 (0 bytes used by the allocator itself)
-  apic: xAPIC id 0 at 0xfee00000 (mapped at 0xffff900020000000); timer 62640 ticks/ms (÷16), periodic at 1000 Hz on vector 32; PICs masked
+  apic: xAPIC id 0 at 0xfee00000 (mapped at 0xffff900020000000); timer 62640 ticks/ms (÷16, HPET; PIT reference 62640 ticks/ms), periodic at 1000 Hz on vector 32; PICs masked
   acpi: RSDP at 0x1fec9014 (revision 2), 6 tables: FACP APIC HPET MCFG WAET BGRT
   acpi: MADT: local APIC at 0xfee00000, 1 CPU(s) with APIC id(s) [0] (this CPU: 0), 1 I/O APIC(s) (id 0 at 0xfec00000, GSI base 0)
   acpi: HPET at 0xfed00000

@@ -471,6 +471,18 @@ fn lapic_timer_ticks_at_one_khz() {
 }
 
 #[test_case]
+fn lapic_hpet_calibration_matches_pit() {
+    use crate::arch::x86_64::apic;
+    let (hpet, pit) = apic::calibration_ticks_per_ms();
+    let hpet = hpet.expect("QEMU q35 always has an HPET");
+    let difference = u64::from(hpet.abs_diff(pit));
+    assert!(
+        difference * 100 <= u64::from(pit) * 5,
+        "HPET calibration {hpet} ticks/ms differs from PIT reference {pit} ticks/ms by more than 5%"
+    );
+}
+
+#[test_case]
 fn acpi_summary_lists_apics_hpet_and_ecam() {
     use crate::arch::x86_64::apic;
     use crate::platform::acpi;
