@@ -18,7 +18,7 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   capabilities routing GSIs to Notifications; `userland/init`, built by `cargo xtask build` and
   loaded from a Limine module, runs in ring 3 with its root CSpace. Smoke and perf now wait for
   `init: idle` instead of `halting`. ABI v1 addendum (syscall results, `invoke` methods, root
-  CSpace, `debug_putc` in all builds) proposed in ADR-0003. 42 in-kernel tests. Review fixes
+  CSpace, `debug_putc` in all builds) accepted in ADR-0003. 42 in-kernel tests. Review fixes
   preserve per-thread x87/SSE state, enforce transfer GRANT on attached capabilities, reject
   unsupported level-triggered IRQs, and account for page-table frames, the idle stack, and ELF
   mappings before use.
@@ -26,26 +26,9 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   headers skipped; truncated, non-x86-64 and out-of-bounds program-header tables, W+X, overrun,
   wrapping, misaligned and overlapping segments, an entry point outside an executable segment and
   too many segments are rejected; `map_into` maps page-rounded ranges, copies exact file bytes and
-  reports mapper failures. Nothing calls the loader at boot yet.
-- P2.9/P2.10: allocation-free `no_std` ELF64 validation and segment-mapping abstractions for a
-  Limine root-task module (untested and not yet called: there is no module request or `init`
-  binary), plus ADR-0002 and the frozen ABI v1 contract. Ring-3 address-space integration remains
-  P2.5 work.
-- P2.5/P2.6 (foundations only, nothing runs in ring 3 yet): kernel ring-3 selector and
-  user-context abstractions, syscall MSR setup (STAR/LSTAR/SFMASK) and CR4 SMEP/SMAP. The syscall
-  entry point only halts, EFER.SCE is not set, and there is no context switch. A budget-aware
-  round-robin scheduler *model* is ticked by the LAPIC timer and uses `carv-budget`, but it holds no
-  threads at runtime and never switches.
-- P2.7/P2.8 (foundations only, exercised by in-kernel tests rather than by user threads):
-  non-blocking endpoint send/recv/call/reply queues, badge-bearing messages with capability
-  transfer, notification signal/wait words, and a GSI-to-notification router that is not yet
-  connected to real interrupt delivery. Capability transfer has a known bug (#141).
+  reports mapper failures. The completed loader now starts `userland/init` at boot.
 - P2.1: added the `carv-abi` crate with syscall numbers, IPC message layout, error codes, and
   capability-rights bits, documented in `docs/abi.md`.
-- P2.4 (partial, #59 reopened): kernel object registry with budget-charged Thread, AddressSpace,
-  Frame, Endpoint, Notification, Budget, and Reply objects, plus ABI-independent `invoke` dispatch
-  abstractions. Objects are type tags without state, cannot yet be created via `invoke`, and the
-  registry is not used by the rest of the kernel.
 - P2.2: `carv-caps`, a pure `no_std` capability-space library with fixed slots, attenuating copy and
   badge minting, derivation tracking, descendant revocation, and proptest coverage.
 - P2.3: `carv-budget`, a pure host-testable `no_std` crate for CPU period refills, memory charges,
@@ -78,7 +61,7 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   installs `linked_list_allocator` (no default features) as the `#[global_allocator]` behind the kernel spin lock
   with interrupts off; `alloc` is enabled in `chisel`; boot prints the heap layout; in-kernel tests exercise
   `Vec`/`Box`/`BTreeMap` and prove memory returns to baseline after 200 allocate/free rounds. Bytes in use are
-  counted for the Budget accounting that arrives with P2.4. An explicit `#[alloc_error_handler]` reports
+  charged to the kernel heap's Budget. An explicit `#[alloc_error_handler]` reports
   `kernel heap exhausted` with the request and heap state and takes the panic path; the `oom` smoke scenario
   (`oom-test` on the cmdline) proves it.
 
@@ -124,14 +107,16 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   parsed (20bcd7d, #100).
 
 ### Changed
+- README, PLAN, changelog and the `carv-abi` API docs now consistently describe the completed
+  Phase 2 implementation, the minimal ring-3 `init`, the 42 kernel tests, the Phase 3 project
+  status, and which security/nightly work remains planned.
 - P2.7: the kernel now depends on `carv-abi` and takes its IPC message limits from it
   (`MESSAGE_WORDS` = 6 inline words, `MESSAGE_CAPS` = 4 capabilities) instead of its own 4-word
   constant, so the kernel queues accept exactly what the frozen ABI v1 allows; an in-kernel test
   checks the limits. Conversion to the `repr(C)` wire `Message` happens with the syscall glue.
-- Docs now match the tree: PLAN.md §4 marks directories and crates that do not exist yet as
-  planned and lists `carv-frames`; CLAUDE.md no longer says `cargo xtask build` builds services
-  and userland, marks `cargo xtask gdb` as not implemented, and notes that the kernel heap does not
-  charge a Budget yet (P2.4).
+- Docs now match the tree: `userland/init` is implemented while services, `carv-rt`, the shell and
+  coreutils remain planned; `cargo xtask gdb` is not implemented; the kernel heap charges its own
+  Budget.
 - Kernel doc-comment cleanup, no behaviour change: `force_stack_overflow`'s doc comment (which had
   been misattached to `force_oom`) now sits on the right function; the module doc no longer opens
   with the stale "P1.1 state" wording and now describes the actual order (banner right after
