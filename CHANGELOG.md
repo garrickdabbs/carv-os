@@ -7,7 +7,6 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Added
-- Fixed broken intra-doc links in the ABI and syscall documentation so strict rustdoc builds pass.
 - P2.4–P2.9 completed (#59–#64): kernel objects with state in one registry behind `invoke`
   (`BUDGET_CREATE`/`DESTROY` for every type, child budgets carved out with `carv-budget`); the
   kernel heap charges its own Budget on every allocation; `syscall` entry with per-thread kernel
@@ -82,6 +81,7 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
   (`oom-test` on the cmdline) proves it.
 
 ### Fixed
+- Fixed broken intra-doc links in the ABI and syscall documentation so strict rustdoc builds pass.
 - #141: IPC capability transfer now needs `GRANT` and installs the receiver's copy as a child of
   the sender's capability in a cross-CSpace derivation tree (`carv_caps::CapSpaces`), so revoke
   removes it.
