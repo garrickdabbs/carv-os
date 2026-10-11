@@ -8,9 +8,9 @@
 **CARV** stands for **Capability Authority & Resource Versioning**: every action needs an explicit
 capability (*authority*), every resource is budgeted and every change is kept (*resource versioning*).
 
-> **Status (2026-10-06):** Phases 0 and 1 complete (`v0.1.1` released, reproducible across machines);
-> Phase 2 implemented: P2.1–P2.10 done — `init` runs in ring 3 with capabilities, budgets, IPC and
-> IRQ delivery; sign-off awaits the maintainer's acceptance of ADR-0003 (ABI addendum). Epics exist
+> **Status (2026-10-11):** Phases 0, 1 and 2 complete (`v0.1.1` released, reproducible across machines);
+> Phase 2: P2.1–P2.10 done — `init` runs in ring 3 with capabilities, budgets, IPC and IRQ delivery;
+> ADR-0003 (ABI addendum) accepted and epic #55 closed 2026-10-11. Epics exist
 > for every phase (#46, #55, #66, #78, #83, #90, #104, #110, #118). Details in §11.
 
 ### Naming conventions
@@ -709,7 +709,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 |---|---|---|
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | **done** | P1.1–P1.7 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, LAPIC timer at 1 kHz, ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
-| P2 Caps/IPC/Budgets | **done, in review** | Epic #55. **Done:** P2.1 `carv-abi` (#56), P2.2 `carv-caps` (#57), P2.3 `carv-budget` (#58), P2.10 ABI freeze (#65); P2.4–P2.9 (#59–#64) completed 2026-10-06 — kernel objects with state behind `invoke`, ring-3 entry and context switch, preemptive budgeted scheduler, blocking IPC with capability transfer, IRQ → Notification, `init` loaded from a Limine module. **Bugs:** #140 fixed 2026-10-01, #142 fixed 2026-10-05, #141 fixed 2026-10-06 (cross-CSpace derivation tree in `carv-caps`). Every kernel allocation charges a `carv-budget` Budget (objects to the creator's budget, the heap to its own). **Open:** ADR-0003 (ABI v1 addendum: syscall results, `invoke` methods, root CSpace) is *Proposed* and needs maintainer acceptance; project-board status updates are done by the maintainer with `gh` |
+| P2 Caps/IPC/Budgets | **done** (2026-10-11) | Epic #55. **Done:** P2.1 `carv-abi` (#56), P2.2 `carv-caps` (#57), P2.3 `carv-budget` (#58), P2.10 ABI freeze (#65); P2.4–P2.9 (#59–#64) completed 2026-10-06 — kernel objects with state behind `invoke`, ring-3 entry and context switch, preemptive budgeted scheduler, blocking IPC with capability transfer, IRQ → Notification, `init` loaded from a Limine module. **Bugs:** #140 fixed 2026-10-01, #142 fixed 2026-10-05, #141 fixed 2026-10-06 (cross-CSpace derivation tree in `carv-caps`). Every kernel allocation charges a `carv-budget` Budget (objects to the creator's budget, the heap to its own). ADR-0003 (ABI v1 addendum: syscall results, `invoke` methods, root CSpace) accepted by the maintainer 2026-10-11; sign-off validated with `cargo xtask test` (host tests, 42 in-kernel tests, 7 smoke scenarios) and epic #55 closed |
 | P3 Runtime & svcmgr | not started | Epic #66 |
 | P4 Drivers | not started | Epic #78 |
 | P5 Versioned Store | not started | Epic #83 |
@@ -734,9 +734,8 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 - **Iterations 6–9:** the board's Iteration field only has Iterations 1–5 configured (through
   2026-12-05). The Phase 6–9 epics (#90, #104, #110, #118), their sub-issues and #126 have no
   iteration until the maintainer adds Iterations 6–9.
-- **Phase 2 sign-off (2026-10-01):** P2.4 (#59) was reopened because its AC are unmet (see its §8
-  row). The ABI freeze is accepted under ADR-0002; kernel adoption of `carv-abi` remains tracked in
-  P2.7.
+- **Phase 2 sign-off (2026-10-11):** all of P2.1–P2.10 (#56–#65) meet their AC (see their §8
+  rows); ADR-0002 and the ADR-0003 addendum are accepted and the epic #55 is closed.
 
 **Deferred to later tasks:** nextest + JUnit output (P9.6), `cargo vet` (P9.7), fuzzing once parsers
 exist (P9.3), Miri/geiger/coverage/50-boot stress in nightly (P9.6), `cargo geiger` in CI (P9.6).

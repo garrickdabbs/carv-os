@@ -1,6 +1,6 @@
 # ADR-0003: ABI v1 addendum — syscall results, `invoke` methods, IPC capability transfer and the root CSpace
 
-- **Status:** Proposed (2026-10-06)
+- **Status:** Accepted (2026-10-11)
 - **Deciders:** maintainer
 - **Related:** P2.4–P2.9 (#59–#64), bug #141, ADR-0002; `docs/abi.md`, `crates/carv-abi`
 
@@ -45,5 +45,5 @@ Additive only — no existing number, code, layout or bit changes, so the ABI st
 
 `carv-abi` gains `ObjectType`, `method`, `map`, `init` and `USER_TOP`; user code and the future
 `carv-rt` can rely on them. The kernel needs a CSpace collection with cross-space derivation. The
-`debug_putc` row in `docs/abi.md` now says what the kernel does. Acceptance of this ADR by the
-maintainer is required before P2 is signed off; until then its status stays *Proposed*.
+`debug_putc` row in `docs/abi.md` now says what the kernel does. The maintainer accepted this ADR
+on 2026-10-11, which signed off Phase 2; further ABI changes need a new ADR.

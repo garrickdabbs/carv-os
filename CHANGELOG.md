@@ -7,6 +7,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Added
+- Phase 2 signed off (#55): ADR-0003 (ABI v1 addendum) accepted by the maintainer; `docs/PLAN.md`
+  §11 marks P2 done.
 - P2.4–P2.9 completed (#59–#64): kernel objects with state in one registry behind `invoke`
   (`BUDGET_CREATE`/`DESTROY` for every type, child budgets carved out with `carv-budget`); the
   kernel heap charges its own Budget on every allocation; `syscall` entry with per-thread kernel
