@@ -241,8 +241,8 @@ impl Scheduler {
         Some(())
     }
 
-    /// Makes an inactive thread runnable in `space` (page-table root `root`) and `cspace` at
-    /// `entry`.
+    /// Makes an inactive thread runnable in `space` (page-table root `root`) at `entry`, naming
+    /// capabilities in `cspace`, the CSpace of the caller starting it.
     pub fn start(
         &mut self,
         id: ThreadId,

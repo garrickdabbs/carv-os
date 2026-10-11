@@ -814,20 +814,11 @@ pub fn load_elf(k: &mut Kernel, space: ObjectId, bytes: &[u8]) -> Result<u64, Er
         return Err(Error::InvalidCapability);
     };
     let before = a.mapped_pages();
-    match image.map_into(a) {
-        Ok(entry) => {
-            let mapped_charge = (a.mapped_pages() - before) as u64 * objects::PAGE_BYTES;
-            k.objects
-                .uncharge(space, reserved_charge.saturating_sub(mapped_charge));
-            Ok(entry)
-        }
-        Err(_) => {
-            let mapped_charge = (a.mapped_pages() - before) as u64 * objects::PAGE_BYTES;
-            k.objects
-                .uncharge(space, reserved_charge.saturating_sub(mapped_charge));
-            Err(Error::InvalidArgument)
-        }
-    }
+    let result = image.map_into(a);
+    let mapped_charge = (a.mapped_pages() - before) as u64 * objects::PAGE_BYTES;
+    k.objects
+        .uncharge(space, reserved_charge.saturating_sub(mapped_charge));
+    result.map_err(|_| Error::InvalidArgument)
 }
 
 /// Maps the initial stack ([`carv_abi::init::STACK_PAGES`] pages below
