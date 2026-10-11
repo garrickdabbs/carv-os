@@ -228,27 +228,21 @@ impl Scheduler {
         self.exits.iter().find(|(t, _)| *t == id).map(|(_, e)| *e)
     }
 
-    /// Creates an inactive user thread `id` with its own kernel stack, charged to and running on
-    /// `budget`, naming capabilities in `cspace`. `None` if no kernel stack could be mapped.
-    pub fn create_user_thread(
-        &mut self,
-        id: ThreadId,
-        budget: ObjectId,
-        cspace: SpaceId,
-    ) -> Option<()> {
+    /// Creates an inactive user thread `id` with its own kernel stack, charged to `budget`.
+    /// `None` if no kernel stack could be mapped.
+    pub fn create_user_thread(&mut self, id: ThreadId, budget: ObjectId) -> Option<()> {
         let stack = KernelStack::new()?;
         let mut tcb = Tcb::new(id, State::Inactive, None);
         // SAFETY: the stack was just mapped for this thread alone and is 32 KiB long.
         tcb.saved_rsp = unsafe { syscall::prepare_stack(stack.top(), user_thread_main, id) };
         tcb.kstack = Some(stack);
         tcb.budget = Some(budget);
-        tcb.cspace = Some(cspace);
         self.threads.insert(id, tcb);
         Some(())
     }
 
-    /// Makes an inactive thread runnable in `space` (page-table root `root`) at `entry`, naming
-    /// capabilities in `cspace` — the CSpace of whoever starts it, not of whoever created it.
+    /// Makes an inactive thread runnable in `space` (page-table root `root`) and `cspace` at
+    /// `entry`.
     pub fn start(
         &mut self,
         id: ThreadId,

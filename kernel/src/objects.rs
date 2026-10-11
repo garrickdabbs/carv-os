@@ -344,10 +344,9 @@ impl ObjectRegistry {
             .any(|(id, e)| *id != budget && e.payer == budget)
     }
 
-    /// Removes `id`, credits its payer (and returns a child budget's reservation), and hands the
-    /// object back so the caller can tear down any external state. A removed budget is consumed
-    /// by its parent and yields `None`. Budgets that still pay for objects are refused.
-    pub fn remove(&mut self, id: ObjectId) -> Result<Option<Object>, ObjectError> {
+    /// Removes `id`, credits its payer, and drops the object. Budgets that still pay for objects
+    /// are refused.
+    pub fn remove(&mut self, id: ObjectId) -> Result<(), ObjectError> {
         if id == self.root_budget {
             return Err(ObjectError::RootBudget);
         }
@@ -355,18 +354,37 @@ impl ObjectRegistry {
         if matches!(entry.object, Object::Budget(_)) && self.pays_for_anything(id) {
             return Err(ObjectError::InUse);
         }
-        let entry = self.entries.remove(&id).expect("checked above");
-        let object = match entry.object {
-            Object::Budget(child) => {
-                if let Some(parent) = self.budget_mut(entry.payer) {
-                    let _ = parent.release_child(child);
-                }
-                None
+        let Entry {
+            object,
+            payer,
+            charged,
+        } = self.entries.remove(&id).expect("checked above");
+        if let Object::Budget(child) = object {
+            let Some(parent) = self.budget_mut(payer) else {
+                self.entries.insert(
+                    id,
+                    Entry {
+                        object: Object::Budget(child),
+                        payer,
+                        charged,
+                    },
+                );
+                return Err(ObjectError::NotFound);
+            };
+            if let Err((_, child)) = parent.release_child(child) {
+                self.entries.insert(
+                    id,
+                    Entry {
+                        object: Object::Budget(child),
+                        payer,
+                        charged,
+                    },
+                );
+                return Err(ObjectError::InvalidMethod);
             }
-            object => Some(object),
-        };
-        self.credit(entry.payer, entry.charged);
-        Ok(object)
+        }
+        self.credit(payer, charged);
+        Ok(())
     }
 }
 

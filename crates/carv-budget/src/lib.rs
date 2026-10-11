@@ -10,7 +10,10 @@
 #![deny(missing_docs)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
+use core::sync::atomic::{AtomicU64, Ordering};
+
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
+static NEXT_BUDGET_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Errors returned while creating or using a budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +30,7 @@ pub enum BudgetError {
     MemoryLimitReached,
     /// More memory was released than was previously charged.
     MemoryUnderflow,
-    /// More child reservation was released than was previously reserved.
+    /// The child reservation does not belong to this budget or cannot be released.
     ReservationUnderflow,
 }
 
@@ -59,6 +62,8 @@ impl Limits {
 /// A CPU and memory account with synchronized, hierarchical child carve-outs.
 #[derive(Debug)]
 pub struct Budget {
+    id: u64,
+    parent_id: Option<u64>,
     limits: Limits,
     period_start_ns: u64,
     cpu_remaining_ns: u64,
@@ -87,6 +92,8 @@ impl Budget {
         }
 
         Ok(Self {
+            id: next_budget_id(),
+            parent_id: None,
             limits: Limits {
                 cpu_budget_ns,
                 cpu_period_ns,
@@ -170,24 +177,27 @@ impl Budget {
         Ok(())
     }
 
-    /// Destroys `child` and returns its reservation to this budget.
+    /// Returns a destroyed child's reservation to this budget, consuming the child budget.
     ///
     /// Taking the child by value means each carved-out child can be released at most once. The
     /// returned CPU reservation becomes available on the next refill, while memory is available
     /// immediately.
     ///
     /// # Errors
-    /// Returns [`BudgetError::ReservationUnderflow`] if `child`'s limits exceed the current child
-    /// reservation. Reservations are not changed on error.
-    pub fn release_child(&mut self, child: Self) -> Result<(), BudgetError> {
-        let child = child.limits;
-        if child.cpu_budget_ns() > self.child_cpu_reserved_ns
-            || child.memory_bytes() > self.child_memory_reserved_bytes
+    /// Returns [`BudgetError::ReservationUnderflow`] and the child budget if it is not a releasable
+    /// child of this budget. Reservations are not changed on error.
+    pub fn release_child(&mut self, child: Budget) -> Result<(), (BudgetError, Budget)> {
+        if child.parent_id != Some(self.id)
+            || child.child_cpu_reserved_ns != 0
+            || child.child_memory_reserved_bytes != 0
+            || child.memory_used_bytes != 0
+            || child.limits.cpu_budget_ns > self.child_cpu_reserved_ns
+            || child.limits.memory_bytes > self.child_memory_reserved_bytes
         {
-            return Err(BudgetError::ReservationUnderflow);
+            return Err((BudgetError::ReservationUnderflow, child));
         }
-        self.child_cpu_reserved_ns -= child.cpu_budget_ns();
-        self.child_memory_reserved_bytes -= child.memory_bytes();
+        self.child_cpu_reserved_ns -= child.limits.cpu_budget_ns;
+        self.child_memory_reserved_bytes -= child.limits.memory_bytes;
         Ok(())
     }
 
@@ -225,6 +235,8 @@ impl Budget {
         self.child_memory_reserved_bytes += memory_bytes;
 
         Ok(Self {
+            id: next_budget_id(),
+            parent_id: Some(self.id),
             limits: Limits {
                 cpu_budget_ns,
                 cpu_period_ns: self.limits.cpu_period_ns,
@@ -237,6 +249,12 @@ impl Budget {
             child_memory_reserved_bytes: 0,
         })
     }
+}
+
+fn next_budget_id() -> u64 {
+    NEXT_BUDGET_ID
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .expect("budget identity space exhausted")
 }
 
 /// A byte/token bucket replenished at a fixed rate with a bounded burst capacity.
@@ -412,24 +430,17 @@ mod tests {
     #[test]
     fn releasing_child_rejects_underflow_without_changes() {
         let mut parent = Budget::new(100, 100, 1_000, 0).unwrap();
-        assert_eq!(
-            parent.release_child(Budget::new(1, 100, 0, 0).unwrap()),
-            Err(BudgetError::ReservationUnderflow)
-        );
+        let mut other = Budget::new(100, 100, 1_000, 0).unwrap();
         let child = parent.carve_out(40, 100, 0).unwrap();
-        assert_eq!(
-            parent.release_child(Budget::new(41, 100, 100, 0).unwrap()),
-            Err(BudgetError::ReservationUnderflow)
-        );
-        assert_eq!(
-            parent.release_child(Budget::new(40, 100, 101, 0).unwrap()),
-            Err(BudgetError::ReservationUnderflow)
-        );
+        let unrelated_child = other.carve_out(41, 101, 0).unwrap();
+        let (error, unrelated_child) = parent.release_child(unrelated_child).unwrap_err();
+        assert_eq!(error, BudgetError::ReservationUnderflow);
         assert_eq!(
             parent.carve_out(61, 0, 0).unwrap_err(),
             BudgetError::CpuLimitExceeded
         );
         parent.release_child(child).unwrap();
+        other.release_child(unrelated_child).unwrap();
     }
 
     #[test]
@@ -444,6 +455,21 @@ mod tests {
         parent.release_child(child).unwrap();
 
         parent.charge_memory(1_000).unwrap();
+    }
+
+    #[test]
+    fn releasing_one_child_keeps_sibling_reservations_charged() {
+        let mut parent = Budget::new(100, 100, 100, 0).unwrap();
+        let first = parent.carve_out(0, 40, 0).unwrap();
+        let _second = parent.carve_out(0, 40, 0).unwrap();
+
+        parent.release_child(first).unwrap();
+
+        parent.charge_memory(60).unwrap();
+        assert_eq!(
+            parent.charge_memory(1),
+            Err(BudgetError::MemoryLimitReached)
+        );
     }
 
     #[test]

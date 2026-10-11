@@ -473,13 +473,13 @@ pub fn destroy_object(k: &mut Kernel, id: ObjectId) -> Result<(), Error> {
         }
         _ => {}
     }
-    let object = k.objects.remove(id)?;
-    k.caps.delete_object(id);
-    let waiters: Vec<ThreadId> = match &object {
-        Some(Object::Endpoint(e)) => e.senders.iter().chain(&e.receivers).copied().collect(),
-        Some(Object::Notification(n)) => n.waiters.iter().copied().collect(),
+    let waiters: Vec<ThreadId> = match k.objects.get(id).expect("object checked above") {
+        Object::Endpoint(e) => e.senders.iter().chain(&e.receivers).copied().collect(),
+        Object::Notification(n) => n.waiters.iter().copied().collect(),
         _ => Vec::new(),
     };
+    k.objects.remove(id)?;
+    k.caps.delete_object(id);
     for t in waiters {
         k.sched.wake(t, [Error::Closed.raw(), 0, 0]);
     }
@@ -564,7 +564,7 @@ fn invoke(k: &mut Kernel, slot: u64, m: u64, a: [u64; 4]) -> Step {
             let dest = empty_slot(k, space, a[1])?;
             let id = match ty {
                 ObjectType::Budget => k.objects.create_budget(b, a[2], a[3], now_ns())?,
-                ObjectType::Thread => create_thread(k, b, space)?,
+                ObjectType::Thread => create_thread(k, b)?,
                 ObjectType::Irq | ObjectType::IrqControl => return Err(Error::InvalidArgument),
                 _ => k.objects.create(ty, b)?,
             };
@@ -657,11 +657,11 @@ fn invoke(k: &mut Kernel, slot: u64, m: u64, a: [u64; 4]) -> Step {
     }
 }
 
-fn create_thread(k: &mut Kernel, budget: ObjectId, space: SpaceId) -> Result<ObjectId, Error> {
+fn create_thread(k: &mut Kernel, budget: ObjectId) -> Result<ObjectId, Error> {
     let id = k
         .objects
         .insert(budget, Object::Thread, object_bytes(ObjectType::Thread))?;
-    if k.sched.create_user_thread(id, budget, space).is_none() {
+    if k.sched.create_user_thread(id, budget).is_none() {
         let _ = k.objects.remove(id);
         return Err(Error::OutOfMemory);
     }
@@ -712,7 +712,7 @@ pub fn create_process(
 ) -> Result<Process, Error> {
     let space = k.objects.create(ObjectType::AddressSpace, budget)?;
     let cspace = k.caps.create_space(init::CSPACE_SLOTS);
-    let thread = match create_thread(k, budget, cspace) {
+    let thread = match create_thread(k, budget) {
         Ok(t) => t,
         Err(e) => {
             let _ = k.objects.remove(space);
@@ -814,12 +814,20 @@ pub fn load_elf(k: &mut Kernel, space: ObjectId, bytes: &[u8]) -> Result<u64, Er
         return Err(Error::InvalidCapability);
     };
     let before = a.mapped_pages();
-    let result = image.map_into(a);
-    // Keep the charge for pages actually mapped (even on a partial failure); release the rest.
-    let mapped_charge = (a.mapped_pages() - before) as u64 * objects::PAGE_BYTES;
-    k.objects
-        .uncharge(space, reserved_charge.saturating_sub(mapped_charge));
-    result.map_err(|_| Error::InvalidArgument)
+    match image.map_into(a) {
+        Ok(entry) => {
+            let mapped_charge = (a.mapped_pages() - before) as u64 * objects::PAGE_BYTES;
+            k.objects
+                .uncharge(space, reserved_charge.saturating_sub(mapped_charge));
+            Ok(entry)
+        }
+        Err(_) => {
+            let mapped_charge = (a.mapped_pages() - before) as u64 * objects::PAGE_BYTES;
+            k.objects
+                .uncharge(space, reserved_charge.saturating_sub(mapped_charge));
+            Err(Error::InvalidArgument)
+        }
+    }
 }
 
 /// Maps the initial stack ([`carv_abi::init::STACK_PAGES`] pages below

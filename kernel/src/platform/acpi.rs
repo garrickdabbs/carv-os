@@ -90,7 +90,7 @@ pub struct Summary {
 impl Summary {
     /// The global system interrupt ISA `irq` arrives on, with its polarity and trigger mode
     /// (identity-mapped, active-high, edge-triggered unless the MADT overrides it).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn isa_irq(&self, irq: u8) -> IsaOverride {
         self.isa_overrides
             .iter()
