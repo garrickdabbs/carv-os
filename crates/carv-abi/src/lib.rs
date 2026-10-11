@@ -213,7 +213,7 @@ pub mod method {
     /// caller's CSpace, in the address space named by slot `a3` (or the caller's own when
     /// `a3 == u64::MAX`). Needs `WRITE`.
     pub const THREAD_START: u64 = 4;
-    /// Address space: maps a fresh zeroed frame at page `a0` with [`map`] flags `a1`, charged to
+    /// Address space: maps a fresh zeroed frame at page `a0` with [`super::map`] flags `a1`, charged to
     /// the address space's budget. Needs `WRITE`.
     pub const ADDRESS_SPACE_MAP: u64 = 5;
     /// IRQ control: creates an [`super::ObjectType::Irq`] capability for global system interrupt
