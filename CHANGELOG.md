@@ -82,6 +82,14 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ### Fixed
 - Fixed broken intra-doc links in the ABI and syscall documentation so strict rustdoc builds pass.
+- `THREAD_START` now runs the thread in the starter's CSpace, as `docs/abi.md` specifies. Before
+  this fix it used the creator's CSpace, so a transferred Thread capability gave the recipient's
+  code the creator's authority.
+- `Budget::release_child` takes the child `Budget` by value, so a child's reservation cannot be
+  released twice.
+- A failed ELF load now releases its unused page-charge reservation.
+- The I/O APIC applies polarity and trigger modes only from explicit MADT overrides, so an
+  identity default can no longer overwrite an override.
 - #141: IPC capability transfer now needs `GRANT` and installs the receiver's copy as a child of
   the sender's capability in a cross-CSpace derivation tree (`carv_caps::CapSpaces`), so revoke
   removes it.

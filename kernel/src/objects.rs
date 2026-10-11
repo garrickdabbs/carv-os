@@ -345,9 +345,9 @@ impl ObjectRegistry {
     }
 
     /// Removes `id`, credits its payer (and returns a child budget's reservation), and hands the
-    /// object back so the caller can tear down any external state. Budgets that still pay for
-    /// objects are refused.
-    pub fn remove(&mut self, id: ObjectId) -> Result<Object, ObjectError> {
+    /// object back so the caller can tear down any external state. A removed budget is consumed
+    /// by its parent and yields `None`. Budgets that still pay for objects are refused.
+    pub fn remove(&mut self, id: ObjectId) -> Result<Option<Object>, ObjectError> {
         if id == self.root_budget {
             return Err(ObjectError::RootBudget);
         }
@@ -356,13 +356,17 @@ impl ObjectRegistry {
             return Err(ObjectError::InUse);
         }
         let entry = self.entries.remove(&id).expect("checked above");
-        if let Object::Budget(child) = &entry.object
-            && let Some(parent) = self.budget_mut(entry.payer)
-        {
-            let _ = parent.release_child(child.limits());
-        }
+        let object = match entry.object {
+            Object::Budget(child) => {
+                if let Some(parent) = self.budget_mut(entry.payer) {
+                    let _ = parent.release_child(child);
+                }
+                None
+            }
+            object => Some(object),
+        };
         self.credit(entry.payer, entry.charged);
-        Ok(entry.object)
+        Ok(object)
     }
 }
 

@@ -65,8 +65,7 @@ pub fn init(acpi: &Summary) -> Option<u8> {
     BASE.store(WINDOW + u64::from(io.address) % 4096, Ordering::Relaxed);
     let inputs = (((read(REG_VERSION) >> 16) & 0xff) + 1).min(u32::from(MAX_GSI)) as u8;
     INPUTS.store(u64::from(inputs), Ordering::Relaxed);
-    for irq in 0..16 {
-        let o = acpi.isa_irq(irq);
+    for o in &acpi.isa_overrides {
         if o.gsi < u32::from(MAX_GSI) {
             let mut mode = 0;
             if o.active_low {

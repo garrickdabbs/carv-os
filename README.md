@@ -109,7 +109,7 @@ Everything goes through `cargo xtask` (a small Rust program in [`xtask/`](xtask/
 | Command | What it does |
 |---|---|
 | `cargo xtask build [--release]` | Build the `chisel` kernel for `x86_64-unknown-none` and verify it is linked in the higher half, then build the ring-3 root task `userland/init` into `target/userland/` (every ISO ships it as the Limine module `boot():/boot/init`). |
-| `cargo xtask image [--release]` | Build a bootable ISO (`target/carv-os.iso`, UEFI + BIOS) and a blank 64 MiB virtio disk (`target/data.img`). `--release` strips debuginfo from the kernel inside the ISO; the unstripped ELF stays in `target/`. |
+| `cargo xtask image [--release]` | Build a bootable ISO (`target/carv-os.iso`, UEFI + BIOS) and a blank 64 MiB virtio disk (`target/data.img`). `--release` strips debuginfo from the kernel and init inside the ISO; the unstripped kernel ELF stays in `target/`. |
 | `cargo xtask limine` | Fetch and verify the pinned Limine bootloader files (done automatically by `image`). |
 | `cargo xtask run [flags]` | Build the image and boot it in QEMU with the serial console on your terminal. `--iso PATH` boots an existing image (e.g. a release) instead. |
 | `cargo xtask test [--host] [--kernel] [--integration] [--release] [--timeout SECS]` | **The one command every PR must pass**: host unit tests, the in-kernel test binary booted in QEMU, and the boot smoke scenarios. No selector runs all three. |

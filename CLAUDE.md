@@ -5,7 +5,7 @@ Read it before starting any task.
 
 ## Commands
 - `cargo xtask build` — build the `chisel` kernel and the ring-3 root task `userland/init` (into `target/userland/`; shipped as the Limine module `boot():/boot/init`); services are added in Phase 3+
-- `cargo xtask image [--release]` — build `target/carv-os.iso` (UEFI + BIOS) and `target/data.img`; `--release` strips debuginfo from the ISO's kernel copy (reproducible builds, #29)
+- `cargo xtask image [--release]` — build `target/carv-os.iso` (UEFI + BIOS) and `target/data.img`; `--release` strips debuginfo from the ISO's kernel and init copies (reproducible builds, #29)
 - `cargo xtask run [--release] [--bios] [--debug] [--timeout SECS]` — boot in QEMU (serial on stdio); `--debug` logs int/reset to `target/qemu.log`; always pass `--timeout` in scripts
 - `cargo xtask smoke [--release] [--timeout SECS]` — boot the UEFI, BIOS, panic, double-fault, page-fault, stack-overflow and out-of-memory scenarios in QEMU and check serial output; logs in `target/smoke/`
 - `cargo xtask docs-gate [--base REF]` — fail (exit 2) if code changed without documentation; CI runs it on every PR from the base branch's xtask. Run it before opening a PR. (Optional, local only: a Claude Code Stop hook in your own `.claude/settings.local.json` — `.claude/` is gitignored and never committed, because a shared settings file would run shell commands on every contributor's machine.)

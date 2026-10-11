@@ -476,8 +476,8 @@ pub fn destroy_object(k: &mut Kernel, id: ObjectId) -> Result<(), Error> {
     let object = k.objects.remove(id)?;
     k.caps.delete_object(id);
     let waiters: Vec<ThreadId> = match &object {
-        Object::Endpoint(e) => e.senders.iter().chain(&e.receivers).copied().collect(),
-        Object::Notification(n) => n.waiters.iter().copied().collect(),
+        Some(Object::Endpoint(e)) => e.senders.iter().chain(&e.receivers).copied().collect(),
+        Some(Object::Notification(n)) => n.waiters.iter().copied().collect(),
         _ => Vec::new(),
     };
     for t in waiters {
@@ -590,7 +590,7 @@ fn invoke(k: &mut Kernel, slot: u64, m: u64, a: [u64; 4]) -> Step {
             let root = aspace.root();
             let mut entry = UserContext::new(rip, rsp);
             entry.rdi = rdi;
-            if !k.sched.start(t, as_id, root, entry) {
+            if !k.sched.start(t, as_id, space, root, entry) {
                 return Err(Error::InvalidOperation);
             }
             Ok(Outcome::Done(0, 0))
@@ -814,15 +814,12 @@ pub fn load_elf(k: &mut Kernel, space: ObjectId, bytes: &[u8]) -> Result<u64, Er
         return Err(Error::InvalidCapability);
     };
     let before = a.mapped_pages();
-    match image.map_into(a) {
-        Ok(entry) => {
-            let mapped_charge = (a.mapped_pages() - before) as u64 * objects::PAGE_BYTES;
-            k.objects
-                .uncharge(space, reserved_charge.saturating_sub(mapped_charge));
-            Ok(entry)
-        }
-        Err(_) => Err(Error::InvalidArgument),
-    }
+    let result = image.map_into(a);
+    // Keep the charge for pages actually mapped (even on a partial failure); release the rest.
+    let mapped_charge = (a.mapped_pages() - before) as u64 * objects::PAGE_BYTES;
+    k.objects
+        .uncharge(space, reserved_charge.saturating_sub(mapped_charge));
+    result.map_err(|_| Error::InvalidArgument)
 }
 
 /// Maps the initial stack ([`carv_abi::init::STACK_PAGES`] pages below
@@ -842,7 +839,7 @@ pub fn start(k: &mut Kernel, p: &Process, rip: u64, rsp: u64, rdi: u64) -> Resul
     let root = a.root();
     let mut entry = UserContext::new(rip, rsp);
     entry.rdi = rdi;
-    if k.sched.start(p.thread, p.space, root, entry) {
+    if k.sched.start(p.thread, p.space, p.cspace, root, entry) {
         Ok(())
     } else {
         Err(Error::InvalidOperation)

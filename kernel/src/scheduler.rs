@@ -247,11 +247,13 @@ impl Scheduler {
         Some(())
     }
 
-    /// Makes an inactive thread runnable in `space` (page-table root `root`) at `entry`.
+    /// Makes an inactive thread runnable in `space` (page-table root `root`) at `entry`, naming
+    /// capabilities in `cspace` — the CSpace of whoever starts it, not of whoever created it.
     pub fn start(
         &mut self,
         id: ThreadId,
         space: ObjectId,
+        cspace: SpaceId,
         root: PhysFrame,
         entry: syscall::UserContext,
     ) -> bool {
@@ -262,6 +264,7 @@ impl Scheduler {
             return false;
         }
         t.space = Some(space);
+        t.cspace = Some(cspace);
         t.root = Some(root);
         t.entry = entry;
         t.state = State::Ready;

@@ -170,15 +170,17 @@ impl Budget {
         Ok(())
     }
 
-    /// Returns a destroyed child's reservation to this budget.
+    /// Destroys `child` and returns its reservation to this budget.
     ///
-    /// The returned CPU reservation becomes available on the next refill, while memory is available
+    /// Taking the child by value means each carved-out child can be released at most once. The
+    /// returned CPU reservation becomes available on the next refill, while memory is available
     /// immediately.
     ///
     /// # Errors
-    /// Returns [`BudgetError::ReservationUnderflow`] if `child` exceeds the current child
+    /// Returns [`BudgetError::ReservationUnderflow`] if `child`'s limits exceed the current child
     /// reservation. Reservations are not changed on error.
-    pub fn release_child(&mut self, child: Limits) -> Result<(), BudgetError> {
+    pub fn release_child(&mut self, child: Self) -> Result<(), BudgetError> {
+        let child = child.limits;
         if child.cpu_budget_ns() > self.child_cpu_reserved_ns
             || child.memory_bytes() > self.child_memory_reserved_bytes
         {
@@ -400,7 +402,7 @@ mod tests {
         let child = parent.carve_out(40, 100, 0).unwrap();
         assert_eq!(parent.cpu_remaining_ns(), 60);
 
-        parent.release_child(child.limits()).unwrap();
+        parent.release_child(child).unwrap();
         assert_eq!(parent.cpu_remaining_ns(), 60);
         assert!(parent.refill(100));
         assert_eq!(parent.cpu_remaining_ns(), 100);
@@ -411,35 +413,23 @@ mod tests {
     fn releasing_child_rejects_underflow_without_changes() {
         let mut parent = Budget::new(100, 100, 1_000, 0).unwrap();
         assert_eq!(
-            parent.release_child(Limits {
-                cpu_budget_ns: 1,
-                cpu_period_ns: 100,
-                memory_bytes: 0,
-            }),
+            parent.release_child(Budget::new(1, 100, 0, 0).unwrap()),
             Err(BudgetError::ReservationUnderflow)
         );
         let child = parent.carve_out(40, 100, 0).unwrap();
         assert_eq!(
-            parent.release_child(Limits {
-                cpu_budget_ns: 41,
-                cpu_period_ns: 100,
-                memory_bytes: 100,
-            }),
+            parent.release_child(Budget::new(41, 100, 100, 0).unwrap()),
             Err(BudgetError::ReservationUnderflow)
         );
         assert_eq!(
-            parent.release_child(Limits {
-                cpu_budget_ns: 40,
-                cpu_period_ns: 100,
-                memory_bytes: 101,
-            }),
+            parent.release_child(Budget::new(40, 100, 101, 0).unwrap()),
             Err(BudgetError::ReservationUnderflow)
         );
         assert_eq!(
             parent.carve_out(61, 0, 0).unwrap_err(),
             BudgetError::CpuLimitExceeded
         );
-        parent.release_child(child.limits()).unwrap();
+        parent.release_child(child).unwrap();
     }
 
     #[test]
@@ -451,7 +441,7 @@ mod tests {
             Err(BudgetError::MemoryLimitReached)
         );
 
-        parent.release_child(child.limits()).unwrap();
+        parent.release_child(child).unwrap();
 
         parent.charge_memory(1_000).unwrap();
     }
