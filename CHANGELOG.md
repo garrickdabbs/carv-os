@@ -7,8 +7,7 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Added
-- Fixed a broken intra-doc link in the ABI address-space mapping documentation so strict rustdoc
-  builds pass.
+- Fixed broken intra-doc links in the ABI and syscall documentation so strict rustdoc builds pass.
 - P2.4–P2.9 completed (#59–#64): kernel objects with state in one registry behind `invoke`
   (`BUDGET_CREATE`/`DESTROY` for every type, child budgets carved out with `carv-budget`); the
   kernel heap charges its own Budget on every allocation; `syscall` entry with per-thread kernel

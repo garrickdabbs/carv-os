@@ -1,7 +1,7 @@
 //! x86-64 `syscall`/`sysret` entry, kernel-stack switching, ring-3 entry and thread context
 //! switching (P2.5).
 //!
-//! `syscall` arrives at [`syscall_entry`] (assembly) with interrupts off (SFMASK clears IF) and the
+//! `syscall` arrives at `carv_syscall_entry` (assembly) with interrupts off (SFMASK clears IF) and the
 //! user stack still loaded. The stub parks the user `rsp`, switches to the current thread's kernel
 //! stack ([`set_kernel_stack`] keeps it and `TSS.RSP0` in step), saves the user registers as a
 //! [`SyscallFrame`] and calls the dispatcher with it. The dispatcher writes the results into the
