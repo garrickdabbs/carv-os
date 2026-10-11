@@ -6,11 +6,14 @@
 //! allocator from the memory map (P1.2), adopts the bootloader's page tables for
 //! map/unmap/translate (P1.3), backs `alloc` with a 1 MiB kernel heap (P1.4), masks the legacy
 //! PICs (P1.5), parses the ACPI tables into a platform summary (P1.6), and enumerates PCI(e)
-//! through the MCFG's ECAM window (P1.7). In test builds (`cargo xtask test --kernel`) `kmain`
-//! then runs the in-kernel tests instead of the rest of this sequence: `test::runner` exits QEMU
-//! directly and never returns, so interrupts stay disabled for the whole test run. In a normal
-//! boot, `kmain` instead enables interrupts, validates the local APIC timer ticks at 1 kHz, and
-//! halts. Kernel command line words `panic-test`, `double-fault-test`, `page-fault-test`,
+//! through the MCFG's ECAM window (P1.7). Phase 2 then masks every I/O APIC input, builds the
+//! kernel object state (root budget, CSpaces, scheduler with the boot and idle threads). In test
+//! builds (`cargo xtask test --kernel`) `kmain` then runs the in-kernel tests instead of the rest
+//! of this sequence: `test::runner` exits QEMU directly and never returns; tests that need time
+//! to pass block the boot thread, and the idle thread enables interrupts while it halts. In a
+//! normal boot, `kmain` instead enables interrupts, validates the local APIC timer ticks at
+//! 1 kHz, loads the `init` boot module into its own address space, starts it in ring 3 on the
+//! root budget (P2.9) and parks the boot thread. Kernel command line words `panic-test`, `double-fault-test`, `page-fault-test`,
 //! `stack-overflow-test` and `oom-test` exercise the panic handler, the double-fault path, the
 //! page-fault handler and the guard-page → double-fault path.
 
@@ -34,8 +37,8 @@ use core::panic::PanicInfo;
 
 use limine::memmap::MEMMAP_USABLE;
 use limine::request::{
-    BootloaderInfoRequest, ExecutableCmdlineRequest, HhdmRequest, MemmapRequest, RsdpRequest,
-    StackSizeRequest,
+    BootloaderInfoRequest, ExecutableCmdlineRequest, HhdmRequest, MemmapRequest, ModulesRequest,
+    RsdpRequest, StackSizeRequest,
 };
 use limine::{BaseRevision, RequestsEndMarker, RequestsStartMarker};
 
@@ -48,8 +51,11 @@ mod platform;
 mod scheduler;
 mod serial;
 mod sync;
+mod syscalls;
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod usertest;
 
 use arch::x86_64::halt_forever;
 
@@ -82,6 +88,11 @@ static MEMMAP: MemmapRequest = MemmapRequest::new();
 #[used]
 #[unsafe(link_section = ".requests")]
 static RSDP: RsdpRequest = RsdpRequest::new();
+
+/// Boot modules: the root task's ELF image, `boot/init` (P2.9).
+#[used]
+#[unsafe(link_section = ".requests")]
+static MODULES: ModulesRequest = ModulesRequest::new();
 
 /// 64 KiB boot stack; the default is smaller than the kernel will want once paging code lands.
 #[used]
@@ -249,6 +260,20 @@ extern "C" fn kmain() -> ! {
             layout.bitmap_phys.as_u64(),
             probe.start().as_u64()
         );
+        match arch::x86_64::ioapic::init(&acpi) {
+            Some(inputs) => kprintln!(
+                "  ioapic: {inputs} inputs masked; GSI n arrives on vector {} + n",
+                arch::x86_64::ioapic::IRQ_VECTOR_BASE
+            ),
+            None => kprintln!("  ioapic: none found; device IRQs unavailable"),
+        }
+        let (free_before_scheduler, _) = mm::frame::stats();
+        objects::init(free_before_scheduler as u64 * carv_frames::FRAME_SIZE as u64);
+        let (free, _) = mm::frame::stats();
+        kprintln!(
+            "  objects: root budget owns {} MiB and the whole CPU; scheduler up (boot + idle threads)",
+            free * carv_frames::FRAME_SIZE / (1024 * 1024)
+        );
     }
 
     #[cfg(test)]
@@ -285,8 +310,43 @@ extern "C" fn kmain() -> ! {
         "LAPIC timer rate wrong: {ticks} ticks in 100 ms, expected 1 kHz"
     );
     kprintln!("  timer: LAPIC timer ticking at 1 kHz ({ticks} ticks in 100 ms)");
-    kprintln!("chisel: nothing more to do yet; halting");
-    halt_forever()
+    arch::x86_64::disable_interrupts();
+    start_init();
+    // The boot thread's work is done: park it for good and let the scheduler run init.
+    objects::with(|k| k.sched.block_current(scheduler::Wait::Sleep(u64::MAX)));
+    scheduler::reschedule();
+    unreachable!("the boot thread was woken")
+}
+
+/// Loads the `boot/init` module into a fresh address space and starts it in ring 3 on the root
+/// budget, with the CSpace layout of `carv_abi::init` (P2.9). Halts if there is no init.
+fn start_init() {
+    let module = MODULES.response().and_then(|r| {
+        r.modules()
+            .iter()
+            .find(|m| m.path().ends_with("/init"))
+            .copied()
+    });
+    let Some(module) = module else {
+        kprintln!("chisel: no init module; nothing to run; halting");
+        halt_forever()
+    };
+    let bytes = module.data();
+    let started = objects::with(|k| {
+        let root = k.objects.root_budget();
+        let process = syscalls::create_process(k, root, true)?;
+        let entry = syscalls::load_elf(k, process.space, bytes)?;
+        let rsp = syscalls::map_stack(k, process.space)?;
+        syscalls::start(k, &process, entry, rsp, 0)?;
+        Ok::<_, carv_abi::Error>((process.thread, entry))
+    });
+    match started {
+        Ok((thread, entry)) => kprintln!(
+            "chisel: starting init ({} bytes, entry {entry:#x}) as thread {thread}",
+            bytes.len()
+        ),
+        Err(e) => panic!("loading init: {e:?}"),
+    }
 }
 
 /// Prints ACPI table signatures space-separated (they are ASCII by specification).

@@ -1,10 +1,10 @@
 //! `cargo xtask <command>`: build orchestration for CarvOS.
 //!
 //! Commands:
-//! - `build [--release]`: build the kernel and check it is linked in the higher half.
+//! - `build [--release]`: build the kernel and root-task init, then check the kernel layout.
 //! - `limine`: fetch and verify the pinned Limine bootloader files (done automatically by `image`).
-//! - `image [--release]`: build a UEFI + BIOS bootable ISO (`target/carv-os.iso`) and a blank
-//!   virtio data disk (`target/data.img`).
+//! - `image [--release]`: build a UEFI + BIOS bootable ISO (`target/carv-os.iso`) containing
+//!   the kernel and root-task init, plus a blank virtio data disk (`target/data.img`).
 //! - `run [--release] [--bios] [--debug] [--timeout SECS] [--cmdline STR]`: boot the image in QEMU
 //!   with serial on stdio. Uses KVM when `/dev/kvm` is usable, TCG otherwise.
 //!
@@ -21,8 +21,9 @@
 //!
 //! `run` and `smoke` accept `--iso PATH` to boot an existing image (e.g. a release artifact)
 //! instead of building one. ISO assembly honours `SOURCE_DATE_EPOCH` (defaulting to the commit
-//! time) and `--release` images carry a debuginfo-stripped kernel; together with the release
-//! profile's `trim-paths` this makes two builds of the same commit byte-identical on any machine.
+//! time) and `--release` images carry debuginfo-stripped kernel and init copies; together with the
+//! release profile's `trim-paths` this makes two builds of the same commit byte-identical on any
+//! machine.
 
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(missing_docs)]
@@ -37,6 +38,8 @@ use sha2::{Digest, Sha256};
 
 const KERNEL_TARGET: &str = "x86_64-unknown-none";
 const KERNEL_PACKAGE: &str = "chisel";
+const INIT_PACKAGE: &str = "init";
+const INIT_ISO_PATH: &str = "init";
 /// Start of the top 2 GiB of the address space, where `kernel/linker.ld` places the kernel.
 const HIGHER_HALF_BASE: u64 = 0xffff_ffff_8000_0000;
 const ISO_NAME: &str = "carv-os.iso";
@@ -142,7 +145,7 @@ fn main() -> ExitCode {
 fn print_help() {
     println!("Usage: cargo xtask <command>\n");
     println!("Commands:");
-    println!("  build [--release]                Build the kernel and verify its layout");
+    println!("  build [--release]                Build the kernel, init and verify kernel layout");
     println!(
         "  limine                           Fetch + verify the pinned Limine {LIMINE_VERSION} files"
     );
@@ -185,7 +188,9 @@ fn build(args: &[String]) -> Result<PathBuf, String> {
         [flag] if flag == "--release" => true,
         _ => return Err(format!("unexpected arguments to build: {args:?}")),
     };
-    build_kernel(release)
+    let kernel = build_kernel(release)?;
+    let _init = build_init(release)?;
+    Ok(kernel)
 }
 
 fn build_kernel(release: bool) -> Result<PathBuf, String> {
@@ -222,6 +227,41 @@ fn build_kernel(release: bool) -> Result<PathBuf, String> {
     }
     println!("kernel: {} (entry {entry:#x})", kernel.display());
     Ok(kernel)
+}
+
+fn build_init(release: bool) -> Result<PathBuf, String> {
+    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let userland_target = target_dir().join("userland");
+    let mut cmd = Command::new(cargo);
+    cmd.current_dir(workspace_root())
+        .env(
+            "RUSTFLAGS",
+            "-C relocation-model=static -C code-model=small",
+        )
+        .arg("build")
+        .arg("--package")
+        .arg(INIT_PACKAGE)
+        .arg("--target")
+        .arg(KERNEL_TARGET)
+        .arg("--target-dir")
+        .arg(&userland_target);
+    if release {
+        cmd.arg("--release");
+    }
+    let status = cmd
+        .status()
+        .map_err(|e| format!("failed to run cargo: {e}"))?;
+    if !status.success() {
+        return Err("init build failed".into());
+    }
+
+    let profile = if release { "release" } else { "debug" };
+    let init = userland_target
+        .join(KERNEL_TARGET)
+        .join(profile)
+        .join(INIT_PACKAGE);
+    println!("init: {}", init.display());
+    Ok(init)
 }
 
 // ---------------------------------------------------------------- limine
@@ -325,9 +365,9 @@ fn ensure_data_disk() -> Result<PathBuf, String> {
 }
 
 /// Assembles a bootable ISO around `kernel` (any ELF built for the kernel target — the normal
-/// kernel or a test kernel) in `out_dir/iso_root`, writing `out_dir/iso_name`.
-/// Release images get a debuginfo-stripped copy of the kernel (#29); the unstripped ELF stays in
-/// `target/` and ships separately as `chisel-vX.Y.Z.elf`.
+/// kernel or a test kernel) and the root-task init module in `out_dir/iso_root`, writing
+/// `out_dir/iso_name`. Release images get debuginfo-stripped copies of the kernel and init (#29);
+/// the unstripped kernel ELF stays in `target/` and ships separately as `chisel-vX.Y.Z.elf`.
 fn assemble_iso(
     kernel: &Path,
     cmdline: &str,
@@ -336,6 +376,7 @@ fn assemble_iso(
     release: bool,
 ) -> Result<PathBuf, String> {
     let limine = ensure_limine()?;
+    let init = build_init(release)?;
 
     let root = out_dir.join("iso_root");
     if root.exists() {
@@ -350,11 +391,17 @@ fn assemble_iso(
 
     let kernel_iso = boot.join(KERNEL_PACKAGE);
     copy(kernel, &kernel_iso)?;
+    let init_iso = boot.join(INIT_ISO_PATH);
+    copy(&init, &init_iso)?;
     if release {
         // Smaller image, and immune to any DWARF detail that could still differ between machines.
-        let mut objcopy = Command::new(llvm_objcopy()?);
-        objcopy.arg("--strip-debug").arg(&kernel_iso);
-        run_tool(&mut objcopy, "llvm-objcopy --strip-debug")?;
+        let objcopy = llvm_objcopy()?;
+        let mut strip_kernel = Command::new(&objcopy);
+        strip_kernel.arg("--strip-debug").arg(&kernel_iso);
+        run_tool(&mut strip_kernel, "llvm-objcopy --strip-debug kernel")?;
+        let mut strip_init = Command::new(objcopy);
+        strip_init.arg("--strip-debug").arg(&init_iso);
+        run_tool(&mut strip_init, "llvm-objcopy --strip-debug init")?;
     }
     fs::write(boot_limine.join("limine.conf"), limine_conf(cmdline))
         .map_err(|e| format!("writing limine.conf: {e}"))?;
@@ -501,7 +548,7 @@ fn run_tool(cmd: &mut Command, what: &str) -> Result<(), String> {
 /// visible (and testable) on `-serial stdio`. `cmdline` is passed to the kernel verbatim.
 fn limine_conf(cmdline: &str) -> String {
     let mut conf = format!(
-        "timeout: 1\nserial: yes\n\n/CarvOS\n    protocol: limine\n    path: boot():/boot/{KERNEL_PACKAGE}\n    kaslr: no\n"
+        "timeout: 1\nserial: yes\n\n/CarvOS\n    protocol: limine\n    path: boot():/boot/{KERNEL_PACKAGE}\n    module_path: boot():/boot/{INIT_ISO_PATH}\n    kaslr: no\n"
     );
     if !cmdline.is_empty() {
         assert!(
@@ -748,7 +795,9 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
             "acpi: HPET at 0x",
             "virtio-blk",
             "virtio-net",
-            "halting",
+            "init: hello from ring 3",
+            "init: created an endpoint via invoke",
+            "init: idle",
         ],
     },
     Scenario {
@@ -762,7 +811,9 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
             "acpi: HPET at 0x",
             "virtio-blk",
             "virtio-net",
-            "halting",
+            "init: hello from ring 3",
+            "init: created an endpoint via invoke",
+            "init: idle",
         ],
     },
     Scenario {
@@ -1250,8 +1301,10 @@ const ISO_BYTES_MAX: u64 = 16 * 1024 * 1024;
 /// Boot-to-banner budget (QEMU spawn to `CarvOS chisel v` on serial), enforced only under KVM
 /// because TCG timings say more about the host than the kernel. OVMF alone costs ~2 s.
 const BOOT_TO_BANNER_MAX: Duration = Duration::from_secs(8);
-/// Kernel work between the banner and the final "halting" line, enforced under KVM.
+/// Kernel work between the banner and `init` reporting idle, enforced under KVM.
 const BANNER_TO_HALT_MAX: Duration = Duration::from_secs(2);
+/// Serial line that marks the end of boot: the ring-3 `init` task has started and gone idle.
+const BOOT_DONE_MARKER: &str = "init: idle";
 
 /// Loaded-segment sizes from an ELF64 file's program headers.
 struct LoadSizes {
@@ -1309,7 +1362,7 @@ fn elf64_load_sizes(bytes: &[u8]) -> Result<LoadSizes, String> {
     Ok(sizes)
 }
 
-/// Boot timing of one QEMU run: when the banner appeared and when the kernel reached "halting".
+/// Boot timing of one QEMU run: when the banner appeared and when `init` reported idle.
 struct BootTiming {
     banner_after: Duration,
     halt_after_banner: Option<Duration>,
@@ -1366,7 +1419,7 @@ fn perf(args: &[String]) -> Result<(), String> {
             &mut cmd,
             BOOT_TO_BANNER_MAX * 4,
             "CarvOS chisel v",
-            "halting",
+            BOOT_DONE_MARKER,
         )?;
         let Some(t) = timing else {
             return Err(format!(
@@ -2015,6 +2068,7 @@ mod tests {
         let conf = limine_conf("");
         assert!(conf.contains("protocol: limine"));
         assert!(conf.contains(&format!("path: boot():/boot/{KERNEL_PACKAGE}")));
+        assert!(conf.contains(&format!("module_path: boot():/boot/{INIT_ISO_PATH}")));
         assert!(conf.contains("serial: yes"));
         assert!(!conf.contains("cmdline:"));
         assert!(limine_conf("panic-test").contains("    cmdline: panic-test\n"));

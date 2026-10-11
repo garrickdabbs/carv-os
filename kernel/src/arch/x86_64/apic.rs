@@ -6,7 +6,7 @@
 //! [`super::super::super::mm::paging::KERNEL_MMIO_BASE`] and reaches it with volatile accesses.
 //! The timer runs periodically at 1 kHz on
 //! [`TIMER_VECTOR`] after being calibrated against the PIT; every tick bumps [`ticks`]. Hardware
-//! IRQ routing to user space (I/O APIC, `Irq` capabilities) comes in P2.8.
+//! IRQ routing to user space (I/O APIC, `Irq` capabilities) is in [`super::ioapic`] (P2.8).
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -144,15 +144,16 @@ pub fn ticks() -> u64 {
 }
 
 /// Signals end-of-interrupt for the interrupt being handled.
-fn eoi() {
+pub fn eoi() {
     write(REG_EOI, 0);
 }
 
-/// Vector 32: count the tick and acknowledge it.
-pub extern "x86-interrupt" fn timer_interrupt(_frame: InterruptStackFrame) {
+/// Vector 32: count the tick, acknowledge it, then let the scheduler charge the running thread
+/// and preempt it if it was in ring 3 (kernel code is never preempted).
+pub extern "x86-interrupt" fn timer_interrupt(frame: InterruptStackFrame) {
     TICKS.fetch_add(1, Ordering::Relaxed);
-    crate::scheduler::timer_tick();
     eoi();
+    crate::scheduler::timer_tick(frame.code_segment.rpl() == x86_64::PrivilegeLevel::Ring3);
 }
 
 /// Vector 0xFF: a spurious interrupt needs no EOI and no work.

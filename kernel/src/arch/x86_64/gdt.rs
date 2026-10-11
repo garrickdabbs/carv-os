@@ -95,6 +95,14 @@ pub fn selectors() -> Selectors {
     unsafe { *SELECTORS.get() }
 }
 
+/// Sets the stack the CPU switches to when an interrupt or exception arrives from ring 3
+/// (`TSS.RSP0`). The scheduler calls this on every switch to a thread that can run in user mode.
+pub fn set_kernel_stack(top: VirtAddr) {
+    // SAFETY: single CPU, called with interrupts disabled; the CPU reads RSP0 only on a ring-3 →
+    // ring-0 transition, which cannot happen while this kernel code runs.
+    unsafe { TSS.get_mut().privilege_stack_table[0] = top };
+}
+
 /// Top of the double-fault IST stack, for tests and diagnostics.
 pub fn double_fault_stack_top() -> VirtAddr {
     // SAFETY: read-only after `init`.

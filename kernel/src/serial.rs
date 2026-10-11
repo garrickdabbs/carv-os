@@ -100,6 +100,15 @@ pub fn init() -> bool {
     present
 }
 
+/// Writes one raw byte to the console (the `debug_putc` syscall).
+pub fn write_byte(byte: u8) {
+    without_interrupts(|| {
+        if let Some(port) = CONSOLE.lock().as_mut() {
+            port.write_byte(byte);
+        }
+    });
+}
+
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments<'_>) {
     without_interrupts(|| {

@@ -1,333 +1,163 @@
-//! Kernel IPC primitives for P2.7 and P2.8.
+//! IPC object state for P2.7 and P2.8: endpoints, notifications and interrupt lines.
 //!
-//! This module deliberately stops at the object layer: endpoint queues and notification words
-//! are ready for the syscall and scheduler glue, while all operations remain non-blocking until
-//! threads and the scheduler are introduced.
+//! The objects here only hold queues and words; the blocking operations that move messages
+//! between threads live in [`crate::syscalls`], which owns the rendezvous logic, and
+//! [`crate::scheduler`], which blocks and wakes threads. Messages are always the ABI v1
+//! [`carv_abi::Message`] copied in from and out to user memory, so the only capabilities a
+//! message can carry are slots of the sender's own CSpace, transferred by the kernel with
+//! `carv_caps::CapSpaces::transfer` (a message can never forge a capability).
 
-use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
-use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU64, Ordering};
+use alloc::collections::VecDeque;
 
-use carv_caps::{CSpace, CSpaceError, Capability};
+use carv_abi::{MESSAGE_CAPS, MESSAGE_WORDS, Message};
 
-use crate::sync::SpinLock;
+use crate::objects::ObjectId;
+use crate::scheduler::ThreadId;
 
-/// Maximum number of machine words carried inline by one IPC message (ABI v1 limit).
-pub const INLINE_WORDS: usize = carv_abi::MESSAGE_WORDS;
-/// Maximum number of capabilities carried by one IPC message (ABI v1 limit).
-pub const TRANSFERRED_CAPS: usize = carv_abi::MESSAGE_CAPS;
-
-/// A small, register-sized IPC payload and optional capability transfer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Message {
-    /// Number of valid entries in [`Message::words`].
-    pub len: usize,
-    /// Inline payload words.
-    pub words: [u64; INLINE_WORDS],
-    /// Capabilities copied into the receiver's CSpace by the IPC glue.
-    pub caps: [Option<Capability>; TRANSFERRED_CAPS],
-}
-
-impl Message {
-    /// Creates an empty message.
-    pub const fn empty() -> Self {
-        Self {
-            len: 0,
-            words: [0; INLINE_WORDS],
-            caps: [None; TRANSFERRED_CAPS],
-        }
-    }
-
-    /// Creates a message from an inline payload.
-    pub fn from_words(words: &[u64]) -> Option<Self> {
-        if words.len() > INLINE_WORDS {
-            return None;
-        }
-        let mut message = Self::empty();
-        message.len = words.len();
-        message.words[..words.len()].copy_from_slice(words);
-        Some(message)
-    }
-
-    /// Adds a capability to the next free transfer slot.
-    pub fn push_cap(&mut self, cap: Capability) -> bool {
-        if let Some(slot) = self.caps.iter_mut().find(|slot| slot.is_none()) {
-            *slot = Some(cap);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Installs all transferred capabilities into empty receiver slots.
-    pub fn install_caps(&self, cspace: &mut CSpace, slots: &[usize]) -> Result<(), CSpaceError> {
-        for (slot_index, cap) in self.caps.iter().flatten().enumerate() {
-            let Some(&slot) = slots.get(slot_index) else {
-                return Err(CSpaceError::SlotOutOfRange);
-            };
-            cspace.insert(slot, cap.object(), cap.rights(), cap.badge())?;
-        }
-        Ok(())
-    }
-}
-
-/// A reply token created by [`Endpoint::call`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ReplyToken(u64);
-
-/// A message received from an endpoint, including the sender badge and optional reply token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Received {
-    /// Badge attached to the sender's endpoint capability.
-    pub badge: u64,
-    /// Message payload and transferred capabilities.
-    pub message: Message,
-    /// Token to use with [`Endpoint::reply`], present for calls.
-    pub reply: Option<ReplyToken>,
-}
-
-struct Request {
-    received: Received,
-}
-
-struct EndpointState {
-    next_reply: u64,
-    queue: Vec<Request>,
-    replies: BTreeMap<u64, Message>,
-}
-
-/// Synchronous IPC endpoint queue.
+/// A synchronous rendezvous point: at most one of the two queues is non-empty.
+#[derive(Debug, Default)]
 pub struct Endpoint {
-    state: SpinLock<EndpointState>,
+    /// Threads blocked in send or call, oldest first; their message is in their control block.
+    pub senders: VecDeque<ThreadId>,
+    /// Threads blocked in recv or reply_recv, oldest first.
+    pub receivers: VecDeque<ThreadId>,
 }
 
 impl Endpoint {
-    /// Creates an empty endpoint.
+    /// An endpoint with nobody waiting.
     pub const fn new() -> Self {
         Self {
-            state: SpinLock::new(EndpointState {
-                next_reply: 1,
-                queue: Vec::new(),
-                replies: BTreeMap::new(),
-            }),
+            senders: VecDeque::new(),
+            receivers: VecDeque::new(),
         }
     }
 
-    /// Enqueues a one-way message with the sender badge.
-    pub fn send(&self, badge: u64, message: Message) {
-        self.state.lock().queue.push(Request {
-            received: Received {
-                badge,
-                message,
-                reply: None,
-            },
-        });
-    }
-
-    /// Dequeues the oldest message, if one is available.
-    pub fn recv(&self) -> Option<Received> {
-        let mut state = self.state.lock();
-        if state.queue.is_empty() {
-            None
-        } else {
-            Some(state.queue.remove(0).received)
-        }
-    }
-
-    /// Enqueues a call and returns its one-shot reply token.
-    pub fn call(&self, badge: u64, message: Message) -> ReplyToken {
-        let mut state = self.state.lock();
-        let token = ReplyToken(state.next_reply);
-        state.next_reply = state.next_reply.wrapping_add(1).max(1);
-        state.queue.push(Request {
-            received: Received {
-                badge,
-                message,
-                reply: Some(token),
-            },
-        });
-        token
-    }
-
-    /// Completes a call. A token can be replied to at most once.
-    pub fn reply(&self, token: ReplyToken, message: Message) -> bool {
-        let mut state = self.state.lock();
-        if state.replies.contains_key(&token.0) {
-            return false;
-        }
-        state.replies.insert(token.0, message).is_none()
-    }
-
-    /// Completes an optional reply and receives the next request (server fast path).
-    pub fn reply_recv(&self, reply: Option<ReplyToken>, message: Message) -> Option<Received> {
-        if let Some(token) = reply {
-            assert!(self.reply(token, message), "reply token was already used");
-        }
-        self.recv()
-    }
-
-    /// Takes a completed reply, if the caller's token has been answered.
-    pub fn take_reply(&self, token: ReplyToken) -> Option<Message> {
-        self.state.lock().replies.remove(&token.0)
+    /// Forgets `thread` (it was killed or its wait was cancelled).
+    pub fn remove(&mut self, thread: ThreadId) {
+        self.senders.retain(|t| *t != thread);
+        self.receivers.retain(|t| *t != thread);
     }
 }
 
-impl Default for Endpoint {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// An asynchronous signal word used for events and IRQ delivery.
+/// An asynchronous signal word: signals accumulate until a waiter takes them.
+#[derive(Debug, Default)]
 pub struct Notification {
-    pending: AtomicU64,
+    /// Signals not yet consumed by a wait.
+    pub pending: u64,
+    /// Threads blocked in wait, oldest first.
+    pub waiters: VecDeque<ThreadId>,
 }
 
 impl Notification {
-    /// Creates a cleared notification.
+    /// A notification with no pending signals.
     pub const fn new() -> Self {
         Self {
-            pending: AtomicU64::new(0),
+            pending: 0,
+            waiters: VecDeque::new(),
         }
     }
 
-    /// Adds one signal to the notification, saturating on overflow.
-    pub fn signal(&self) {
-        let _ = self
-            .pending
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_add(1));
+    /// Records one signal. Returns a waiter to wake with the accumulated count, if any; the
+    /// count is then consumed.
+    pub fn signal(&mut self) -> Option<(ThreadId, u64)> {
+        self.pending = self.pending.saturating_add(1);
+        let waiter = self.waiters.pop_front()?;
+        Some((waiter, core::mem::take(&mut self.pending)))
     }
 
-    /// Consumes one pending signal, or returns `false` when none is pending.
-    pub fn wait(&self) -> bool {
-        self.pending
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_sub(1))
-            .is_ok()
-    }
-
-    /// Returns the number of pending signals.
-    pub fn pending(&self) -> u64 {
-        self.pending.load(Ordering::Acquire)
+    /// Takes the accumulated count if there is one.
+    pub fn poll(&mut self) -> Option<u64> {
+        (self.pending > 0).then(|| core::mem::take(&mut self.pending))
     }
 }
 
-impl Default for Notification {
-    fn default() -> Self {
-        Self::new()
+/// One hardware interrupt line (a global system interrupt) and the notification it signals.
+#[derive(Debug)]
+pub struct IrqLine {
+    /// The IOAPIC input this object stands for.
+    pub gsi: u8,
+    /// Notification signalled on every interrupt, once bound.
+    pub notification: Option<ObjectId>,
+}
+
+/// Checks a message copied in from user memory against the ABI v1 rules: counts within the
+/// limits ([`carv_abi::Error::MessageTooLarge`]) and every unused word and cap zero
+/// ([`carv_abi::Error::InvalidArgument`]).
+pub fn validate(message: &Message) -> Result<(), carv_abi::Error> {
+    let (words, caps) = (message.info.words(), message.info.caps());
+    if words > MESSAGE_WORDS || caps > MESSAGE_CAPS {
+        return Err(carv_abi::Error::MessageTooLarge);
+    }
+    let canonical = carv_abi::MessageInfo::new(words, caps).expect("checked above");
+    if canonical != message.info
+        || message.words[words..].iter().any(|w| *w != 0)
+        || message.caps[caps..].iter().any(|c| *c != 0)
+    {
+        return Err(carv_abi::Error::InvalidArgument);
+    }
+    Ok(())
+}
+
+/// Views a message as bytes for copying to user memory.
+pub fn as_bytes(message: &Message) -> &[u8] {
+    // SAFETY: `Message` is `repr(C)`, made only of `u64`s (no padding), so all of its
+    // `size_of::<Message>()` bytes are initialised and any byte view of it is valid.
+    unsafe {
+        core::slice::from_raw_parts(
+            core::ptr::from_ref(message).cast::<u8>(),
+            size_of::<Message>(),
+        )
     }
 }
 
-/// Capability-like handle for routing one hardware interrupt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Irq {
-    /// Global system interrupt number.
-    pub gsi: u32,
-    /// Badge delivered with the notification.
-    pub badge: u64,
-}
-
-struct Route {
-    irq: Irq,
-    notification: Arc<Notification>,
-}
-
-/// Routes hardware interrupt numbers to notification objects.
-pub struct IrqRouter {
-    routes: SpinLock<Vec<Route>>,
-}
-
-impl IrqRouter {
-    /// Creates an empty IRQ router.
-    pub const fn new() -> Self {
-        Self {
-            routes: SpinLock::new(Vec::new()),
-        }
-    }
-
-    /// Binds an IRQ to a notification, rejecting duplicate GSI routes.
-    pub fn bind(&self, irq: Irq, notification: Arc<Notification>) -> bool {
-        let mut routes = self.routes.lock();
-        if routes.iter().any(|route| route.irq.gsi == irq.gsi) {
-            return false;
-        }
-        routes.push(Route { irq, notification });
-        true
-    }
-
-    /// Delivers one interrupt and returns the routed badge, if any.
-    pub fn dispatch(&self, gsi: u32) -> Option<u64> {
-        let routes = self.routes.lock();
-        let route = routes.iter().find(|route| route.irq.gsi == gsi)?;
-        route.notification.signal();
-        Some(route.irq.badge)
-    }
-}
-
-impl Default for IrqRouter {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Builds a message from bytes copied in from user memory.
+pub fn from_bytes(bytes: &[u8; size_of::<Message>()]) -> Message {
+    // SAFETY: `Message` is `repr(C)` and made only of `u64`s and a transparent `u64`, so every
+    // bit pattern is valid; `read_unaligned` copes with the byte array's alignment.
+    unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<Message>()) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::sync::Arc;
-    use carv_caps::{CSpace, Rights};
 
     #[test_case]
-    fn endpoint_badges_caps_and_reply_round_trip() {
-        let endpoint = Endpoint::new();
-        let mut sender = CSpace::new(2);
-        sender
-            .insert(0, 0xCAFE, Rights::READ | Rights::DERIVE, 7)
-            .unwrap();
-        let mut message = Message::from_words(&[0x1234]).unwrap();
-        assert!(message.push_cap(sender.get(0).unwrap()));
-
-        let token = endpoint.call(42, message);
-        let request = endpoint.recv().expect("call must be queued");
-        assert_eq!(request.badge, 42);
-        let mut receiver = CSpace::new(2);
-        request.message.install_caps(&mut receiver, &[1]).unwrap();
-        assert_eq!(receiver.get(1).unwrap().object(), 0xCAFE);
-        assert_eq!(receiver.get(1).unwrap().badge(), 7);
-        endpoint.reply(token, Message::from_words(&[0xBEEF]).unwrap());
-        assert_eq!(endpoint.take_reply(token).unwrap().words[0], 0xBEEF);
-        assert!(endpoint.take_reply(token).is_none());
+    fn message_validation_matches_abi_v1() {
+        let mut m = Message {
+            label: 7,
+            info: carv_abi::MessageInfo::new(2, 1).unwrap(),
+            ..Message::default()
+        };
+        m.words[..2].copy_from_slice(&[1, 2]);
+        m.caps[0] = 5;
+        assert_eq!(validate(&m), Ok(()));
+        let round = from_bytes(as_bytes(&m).try_into().unwrap());
+        assert_eq!(round, m);
+        m.words[3] = 9;
+        assert_eq!(validate(&m), Err(carv_abi::Error::InvalidArgument));
+        let mut bytes: [u8; 96] = as_bytes(&Message::default()).try_into().unwrap();
+        bytes[8] = 7; // seven words
+        assert_eq!(
+            validate(&from_bytes(&bytes)),
+            Err(carv_abi::Error::MessageTooLarge)
+        );
+        bytes[8] = 0;
+        bytes[12] = 1; // garbage high bits in the info word
+        assert_eq!(
+            validate(&from_bytes(&bytes)),
+            Err(carv_abi::Error::InvalidArgument)
+        );
     }
 
     #[test_case]
-    fn message_limits_match_abi_v1() {
-        let full = [0u64; carv_abi::MESSAGE_WORDS];
-        assert!(Message::from_words(&full).is_some());
-        let over = [0u64; carv_abi::MESSAGE_WORDS + 1];
-        assert!(Message::from_words(&over).is_none());
-        assert_eq!(Message::empty().caps.len(), carv_abi::MESSAGE_CAPS);
-    }
-
-    #[test_case]
-    fn notification_and_irq_routing() {
-        let notification = Arc::new(Notification::new());
-        let router = IrqRouter::new();
-        assert!(router.bind(
-            Irq {
-                gsi: 1,
-                badge: 0x55
-            },
-            notification.clone()
-        ));
-        assert!(!router.bind(
-            Irq {
-                gsi: 1,
-                badge: 0x99
-            },
-            notification.clone()
-        ));
-        assert_eq!(router.dispatch(99), None);
-        assert_eq!(router.dispatch(1), Some(0x55));
-        assert!(notification.wait());
-        assert!(!notification.wait());
+    fn notifications_accumulate_until_taken() {
+        let mut n = Notification::new();
+        assert_eq!(n.poll(), None);
+        assert_eq!(n.signal(), None);
+        assert_eq!(n.signal(), None);
+        assert_eq!(n.poll(), Some(2));
+        n.waiters.push_back(9);
+        assert_eq!(n.signal(), Some((9, 1)));
+        assert_eq!(n.poll(), None);
     }
 }
