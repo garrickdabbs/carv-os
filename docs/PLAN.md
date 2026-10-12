@@ -472,8 +472,8 @@ protection, Scorecard and rulesets are all available at no cost.
 - **Nightly — `.github/workflows/nightly.yml`** (`schedule: cron '0 6 * * *'` + `workflow_dispatch`):
   the current long-running and drift-detecting job:
   - runs the full release-profile test suite;
-  - boots one release ISO through UEFI and BIOS in 10 consecutive rounds (20 boots total), checking
-    `cargo xtask smoke`'s exit code directly rather than filtering it through `grep`;
+  - boots one release ISO through all seven smoke scenarios in 10 consecutive rounds (70 boots total),
+    checking `cargo xtask smoke`'s exit code directly rather than filtering it through `grep`;
   - runs the 10-sample performance budgets and `cargo audit` against a fresh RustSec database;
   - builds and lints the kernel with the newest unpinned nightly as an informational drift check;
   - publishes the resulting ISO as the rolling, unsigned `nightly` pre-release;
