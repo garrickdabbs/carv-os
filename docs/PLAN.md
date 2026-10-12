@@ -10,8 +10,9 @@ capability (*authority*), every resource is budgeted and every change is kept (*
 
 > **Status (2026-10-11):** Phases 0, 1 and 2 complete (`v0.1.1` released, reproducible across machines);
 > Phase 2: P2.1–P2.10 done — `init` runs in ring 3 with capabilities, budgets, IPC and IRQ delivery;
-> ADR-0003 (ABI addendum) accepted and epic #55 closed 2026-10-11. Epics exist
-> for every phase (#46, #55, #66, #78, #83, #90, #104, #110, #118). Details in §11.
+> ADR-0003 (ABI addendum) accepted and epic #55 closed 2026-10-11. Phase 3 is next
+> (epic #66, 0/4 tasks complete; Iteration 3 starts 2026-10-24). Epics exist for every phase
+> (#46, #55, #66, #78, #83, #90, #104, #110, #118). Details in §11.
 
 ### Naming conventions
 | Form | Use it for |
@@ -128,7 +129,7 @@ registers, large ones via a per-thread IPC buffer page.
 
 | # | Syscall | Notes |
 |---|---|---|
-| 0 | `debug_putc` | Debug builds only; removed later. |
+| 0 | `debug_putc` | Available in all builds until the P3.4 console service replaces it (ADR-0003). |
 | 1 | `send(cap, msg)` | |
 | 2 | `recv(cap) -> (badge, msg)` | |
 | 3 | `call(cap, msg) -> msg` | send + wait for reply |
@@ -225,7 +226,7 @@ carv-os/
 ├── .github/
 │   ├── workflows/              # one workflow per README badge (§7.2)
 │   │   ├── build.yml          # `build`: fmt, clippy (host + kernel), debug/release build, host tests, ISO artifact
-│   │   ├── ci.yml              # `boot-smoke`: cargo xtask test — host + in-kernel tests, UEFI/BIOS/panic smoke in QEMU
+│   │   ├── ci.yml              # `boot-smoke`: host + in-kernel tests and seven boot scenarios in QEMU
 │   │   ├── security.yml       # `security`: cargo deny, cargo audit, unsafe inventory, SHA-pinned-action check
 │   │   ├── docs.yml            # `docs`: docs-gate, rustdoc -D warnings, lychee markdown link check
 │   │   ├── perf.yml            # `perf`: cargo xtask perf size/boot-time budgets
@@ -261,16 +262,16 @@ carv-os/
 │   ├── carv-value/           # Value model + CBOR codec + schema types (planned, P6.1)
 │   ├── carv-vstore-core/     # object store format, tree/commit logic (planned, P5.2)
 │   └── carv-rt/              # user-space runtime: _start, syscalls, allocator, IPC helpers, spawn (planned, P3.1)
-├── services/                  # planned: none of these exist yet (Phases 2.9–8)
-│   ├── init/                  # first user process; starts svcmgr
+├── services/                  # planned: none exist yet (Phases 3–8)
 │   ├── svcmgr/                # spawns & supervises services, records program hashes
 │   ├── cons/                  # serial/framebuffer console server
 │   ├── blkd/                  # virtio-blk driver
 │   ├── vstore/                # filesystem service over blkd
 │   ├── netd/                  # virtio-net + smoltcp
 │   └── authd/                 # users, login, grants
-├── userland/                  # planned (Phase 6)
-│   ├── sh/                    # typed shell
+├── userland/
+│   ├── init/                  # minimal root task, loaded from Limine and running in ring 3 (P2.9)
+│   ├── sh/                    # typed shell (planned, Phase 6)
 │   └── coreutils/             # ls cat cp mv rm mkdir stat log undo ps top caps whoami ...
 └── tests/                     # planned; integration checks live in `cargo xtask smoke`/`test` today
     ├── integration/           # host-side harness that boots QEMU and drives serial
@@ -312,28 +313,30 @@ locations (override with `CARV_OVMF_CODE`/`CARV_OVMF_VARS`) and falls back to `-
 
 ## 6. Testing Strategy (four layers)
 
-1. **Host unit tests**: `cargo test -p carv-caps -p carv-value -p carv-vstore-core -p carv-budget`.
-   Pure logic, run in milliseconds. Property tests with `proptest` for the cap derivation tree
-   (revoke removes every descendant), vstore (crash at any write, then recover to the last commit),
-   and CBOR round-trips.
+1. **Host unit tests**: `cargo test --workspace --exclude chisel` currently covers `xtask`,
+   `carv-frames`, `carv-abi`, `carv-caps`, `carv-budget`, and the host stub of `userland/init`.
+   Pure logic runs natively; `carv-caps` uses `proptest` to check derivation-tree invariants.
+   Future pure crates add vstore crash/recovery and CBOR round-trip properties.
 2. **In-kernel tests**: a custom test framework (`#![feature(custom_test_frameworks)]`, `kernel/src/test.rs`)
    boots the kernel in QEMU, runs `#[test_case]` functions, and exits through `isa-debug-exit` with a pass
-   (33) or fail (35) code that `cargo xtask test --kernel` maps to success/failure. Will cover paging,
-   allocator, IPC, scheduler, and budget enforcement as they land.
-3. **System integration tests**: `tests/integration` boots the full image, talks to the serial shell
-   (pexpect in Python, or Rust `rexpect`), sends commands, and checks the output. The shell's
-   `--json` mode makes these checks exact rather than regex-based. Each phase adds scenarios (see
-   the acceptance criteria below).
-4. **Fuzzing (Phase 9+)**: `cargo fuzz` targets for the CBOR decoder, vstore image parser, and the
-   syscall-argument validator (host-compiled).
+   (33) or fail (35) code that `cargo xtask test --kernel` maps to success/failure. The current 42
+   tests cover platform setup, memory, objects, budgets, ring-3 isolation, scheduling, IPC, IRQs and
+   the root-task ELF.
+3. **Boot smoke tests**: `cargo xtask smoke` boots UEFI, BIOS, panic, double-fault, page-fault,
+   stack-overflow and out-of-memory scenarios and checks their serial output. A future
+   `tests/integration` harness will drive the Phase 6 serial shell and assert its structured output.
+4. **Fuzzing (planned, P9.3)**: `cargo fuzz` targets for the CBOR decoder, vstore image parser, and
+   syscall-argument validator once those parsers exist.
 
-**Crash-consistency test:** the harness kills QEMU at random points during write-heavy
-workloads, reboots, and checks that vstore mounts at a consistent commit.
+**Crash-consistency test (planned, P9.6):** the future harness kills QEMU at random points during
+write-heavy workloads, reboots, and checks that vstore mounts at a consistent commit.
 
-**CI:** every layer runs on GitHub Actions; the workflows, security controls, nightly jobs, and
-release pipeline are specified in §7.
+**CI:** every implemented layer runs on GitHub Actions; the workflows, security controls, nightly
+jobs, and release pipeline are specified in §7.
 
-**Single command:** `cargo xtask test` runs layers 1–3 (`--host`, `--kernel`, `--integration` select a subset). Agents must run it before claiming a task is done.
+**Single command:** `cargo xtask test` runs layers 1–3 (`--host`, `--kernel`, `--integration`
+select host tests, kernel tests or boot smoke respectively). Agents must run it before claiming a
+task is done.
 
 ---
 
@@ -397,11 +400,11 @@ history. All trigger on `pull_request`, `push` to `main`, `merge_group` and `wor
 
 | Workflow (badge) | Job (required check) | What it does | Timeout |
 |---|---|---|---|
-| **Build** `build.yml` | `build` | `cargo fmt --check`; clippy `-D warnings` for host crates *and* `-p chisel --target x86_64-unknown-none`; `cargo xtask build` debug and `--release` (higher-half layout verified); `cargo test --workspace --locked`; `cargo xtask image --release`; ISO uploaded as a 7-day artifact on `main` | 20 min |
-| **CI** `ci.yml` | `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask test --timeout 120`: host unit tests, the in-kernel test kernel booted in QEMU (`isa-debug-exit` 33/35), and the UEFI/BIOS/`panic-test` smoke scenarios with serial output asserted; uploads `target/test/*.log` and `target/smoke/*.log`. Job name stays `boot-smoke` (required check) | 30 min |
+| **Build** `build.yml` | `build` | `cargo fmt --check`; clippy `-D warnings` for host crates *and* `-p chisel --target x86_64-unknown-none`; `cargo xtask build` debug and `--release` (higher-half layout verified); build the kernel test binary; `cargo test --workspace --exclude chisel --locked`; `cargo xtask image --release`; ISO uploaded as a 7-day artifact on `main` | 20 min |
+| **CI** `ci.yml` | `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask test --timeout 120`: host unit tests, the in-kernel test kernel booted in QEMU (`isa-debug-exit` 33/35), and all seven boot scenarios (UEFI, BIOS, panic, double fault, page fault, stack overflow, OOM) with serial output asserted; uploads `target/test/*.log` and `target/smoke/*.log`. Job name stays `boot-smoke` (required check) | 30 min |
 | **Security** `security.yml` | `security` | `cargo deny check` (advisories, licenses, bans, sources); `cargo audit --deny warnings` with a fresh RustSec DB; clippy with only `undocumented_unsafe_blocks` as an error; unsafe inventory in the job summary; every `uses:` pinned to a 40-hex SHA; no `write-all` permissions. Also runs **weekly** so new advisories surface without a code change | 15 min |
 | **Docs** `docs.yml` | `docs` | `docs-gate` run from the **base branch's** xtask against the PR checkout (a PR cannot weaken the gate it is judged by); requires *new content under Unreleased* in CHANGELOG.md, a *new* ADR file for `docs/abi.md`, and a skip marker only with a ≥ 20-character reason (PRs; Dependabot exempt); rustdoc with `RUSTDOCFLAGS=-D warnings` (crate roots deny `missing_docs`); `lychee --offline` checks every local Markdown link and anchor — or, in a release PR, a new `## [x.y.z]` version heading | 15 min |
-| **Performance** `perf.yml` | `perf` | `cargo xtask perf --runs 5`: release-kernel loaded size, ISO size, boot-to-banner and banner-to-halt (median, KVM) against budgets in `xtask`; over budget fails; report to the job summary | 30 min |
+| **Performance** `perf.yml` | `perf` | `cargo xtask perf --runs 5`: release-kernel loaded size, ISO size, boot-to-banner and banner-to-`init: idle` (median, KVM) against budgets in `xtask`; over budget fails; report to the job summary | 30 min |
 | **CodeQL** `codeql.yml` | `codeql (rust)`, `codeql (actions)` | GitHub code scanning of the Rust sources and of the workflow files; PRs, `main`, weekly. Advisory (not a required check) | 45 min |
 | **Scorecard** `scorecard.yml` | `scorecard` | OpenSSF Scorecard on `main` and weekly; publishes results for the README badge and to code scanning. Advisory | 15 min |
 
@@ -441,14 +444,14 @@ Details:
 | Dependency updates | **Dependabot** for `cargo` and `github-actions`, weekly, grouped minor/patch | `.github/dependabot.yml` |
 | Vulnerable / unlicensed / duplicate deps | **`cargo deny`** (`advisories`, `licenses` allow-list: MIT, Apache-2.0, BSD-2/3, ISC, Zlib, Unicode-3.0; `bans`: duplicate versions are an *error*; `sources` = crates.io only) | `deny.toml`, `security` job |
 | Fresh advisories without a code change | **`cargo audit`** on the nightly schedule (advisory DB moves even when code doesn't) | `nightly.yml` |
-| Unsafe-code discipline (mechanizes the CLAUDE.md rule) — *partially live* | clippy `#![deny(clippy::undocumented_unsafe_blocks)]` + `#![deny(missing_docs)]` in every crate root — *live*; `#![deny(unsafe_op_in_unsafe_fn)]` in the kernel crate root (`kernel/src/main.rs`), the only crate with `unsafe fn`s today — *live*; `unsafe` forbidden (`#![forbid(unsafe_code)]`) in pure `crates/*` except `carv-rt` — *live*; `cargo geiger` unsafe-count report posted to the PR summary — **deferred to P9.6** (not in any workflow yet, consistent with §11 "deferred to later tasks") | crate roots, `build.yml` (clippy) and `security.yml` (unsafe inventory) |
-| Undefined behaviour in host-testable code | **Miri**: `cargo miri test` on the pure crates (`carv-caps`, `carv-value`, `carv-vstore-core`, `carv-budget`) | `nightly.yml` |
-| Fuzzing (P9.3) | `cargo fuzz` for 20 min per target nightly; corpus cached as an artifact; a crash uploads the input and opens/updates an issue labeled `kind:security` | `nightly.yml` |
+| Unsafe-code discipline (mechanizes the CLAUDE.md rule) — *partially live* | clippy denies undocumented unsafe blocks and crate roots deny missing docs; the kernel denies unsafe operations inside `unsafe fn`; current pure crates forbid unsafe code; the security job publishes a text unsafe inventory. `cargo geiger` remains deferred to P9.6 (#124) | crate roots, `build.yml`, `security.yml` |
+| Undefined behaviour in host-testable code — *planned, P9.6 (#124)* | **Miri** on the pure crates once the remaining core libraries exist; not wired into nightly yet | planned for `nightly.yml` |
+| Fuzzing — *planned, P9.3 (#121)* | `cargo fuzz` for the future CBOR, vstore and syscall-validation targets; not wired into nightly yet | planned for `nightly.yml` |
 | Actions supply chain | Every action pinned to a **full commit SHA** (Dependabot bumps them); top-level `permissions: contents: read`, elevated per job only (`id-token: write`, `attestations: write`, `contents: write` for release); no long-lived secrets anywhere, signing is keyless via OIDC | all workflows |
 | Static analysis | **CodeQL** code scanning (Rust + Actions) on PRs, `main` and weekly; **OpenSSF Scorecard** weekly with a README badge, target ≥ 7 by Phase 9 — *both live* | `codeql.yml`, `scorecard.yml` |
 | Secrets & reporting | Secret scanning + push protection, Dependabot alerts + security updates, **private vulnerability reporting** — *all enabled 2026-09-27 when the repo went public*; `SECURITY.md` with the disclosure process and a plain statement that this is a hobby OS with no security guarantees | repo settings, `SECURITY.md` |
-| Kernel hardening tests | W^X, guard pages, SMEP/SMAP, user/kernel isolation each have an in-kernel test that CI runs (P9.4) | `kernel-tests` job |
-| Threat model | `docs/threat-model.md` (P9.5) lists assets, trust boundaries (kernel ↔ services ↔ user programs ↔ network), and which controls above cover each threat | `docs/` |
+| Kernel hardening tests — *partial; full P9.4 is open (#122)* | Phase 2 tests cover user-map W^X, per-thread kernel-stack guard pages and user/kernel fault isolation; SMEP/SMAP are enabled but not directly asserted; stack canaries and KASLR-lite remain planned | in-kernel tests; P9.4 |
+| Threat model — *planned, P9.5 (#123)* | `docs/threat-model.md` will list assets, trust boundaries and their controls; the file does not exist yet | planned for `docs/` |
 
 **Visibility:** the repository has been public since 2026-09-27, so CodeQL, secret-scanning push
 protection, Scorecard and rulesets are all available at no cost.
@@ -463,26 +466,27 @@ protection, Scorecard and rulesets are all available at no cost.
   `.claude/` is gitignored): a committed settings file would run shell commands on every
   contributor's machine, so repository policy lives in CI only (decided 2026-09-27). Escape hatch:
   `docs-gate: skip` plus a reason in the PR body.
-- **Per-PR:** layer 1 via `build.yml` and `ci.yml`, layers 2–3 via `ci.yml` (`cargo xtask test`), plus the Security, Docs and Performance workflows. Integration tests talk to the shell in `--json` mode so
-  assertions are exact. Failures always upload the serial log, QEMU log, and the ISO that failed.
+- **Per-PR:** layer 1 via `build.yml` and `ci.yml`, layers 2–3 via `ci.yml` (`cargo xtask test`),
+  plus the Security, Docs and Performance workflows. Failures upload available serial and QEMU
+  logs. Phase 6 integration tests will talk to the shell in `--json` mode so assertions are exact.
 - **Nightly — `.github/workflows/nightly.yml`** (`schedule: cron '0 6 * * *'` + `workflow_dispatch`):
-  long-running and drift-detecting jobs that are too slow or too noisy for PRs:
-  - crash-consistency loop: 200 randomized kill-and-recover cycles against `vstore`
-  - fuzzing (20 min/target), Miri, `cargo audit`, `cargo geiger`
-  - **toolchain drift:** build and test with `nightly` (unpinned) and `beta` so a future toolchain
-    bump has no surprises; failures here are informational (`continue-on-error`)
-  - a stress boot: 10 consecutive UEFI+BIOS rounds today (50 boots to a shell prompt from Phase 6);
-    the loop checks `cargo xtask smoke`'s exit code directly, never through `grep`
-  - On failure the workflow creates or updates a single pinned issue **"Nightly is failing"**
-    with links to the run, and closes it when green again. Implemented as a separate
-    `report-status` job (`needs: [nightly, publish]`, `if: always()`) that holds only
-    `issues: write` — never `contents` — so it can run even when the test jobs fail.
+  the current long-running and drift-detecting job:
+  - runs the full release-profile test suite;
+  - boots one release ISO through all seven smoke scenarios in 10 consecutive rounds (70 boots total),
+    checking `cargo xtask smoke`'s exit code directly rather than filtering it through `grep`;
+  - runs the 10-sample performance budgets and `cargo audit` against a fresh RustSec database;
+  - builds and lints the kernel with the newest unpinned nightly as an informational drift check;
+  - publishes the resulting ISO as the rolling, unsigned `nightly` pre-release;
+  - creates or updates one pinned **"Nightly is failing"** issue on failure and closes it when green.
+    The separate `report-status` job holds only `issues: write`, never `contents`.
+- **Nightly work still planned:** P9.3 adds fuzzing (#121); P9.6 adds Miri, `cargo geiger`,
+  `cargo llvm-cov`, crash-consistency loops and the later 50-boot shell stress run (#124).
 - **Test reporting (deferred):** host tests run with plain `cargo test` today; `cargo-nextest` with
   JUnit output for host, kernel and integration tests, rendered into the job summary and kept as
   artifacts for 30 days, is planned for P9.6.
-- **Coverage:** `cargo llvm-cov` on the pure crates only (kernel coverage isn't practical); reported
-  in the summary, no hard threshold, trend tracked in the nightly issue.
-- **Hermetic tests:** integration tests that need internet (`P8.4` DNS) are marked
+- **Coverage (planned, P9.6):** `cargo llvm-cov` on the pure crates only (kernel coverage is not
+  practical), reported in the summary without a hard threshold.
+- **Hermetic tests (planned, P8.4):** integration tests that need internet will be marked
   `#[ignore = "needs-network"]` and run only in nightly with `--include-ignored`.
 
 ### 7.5 Releases — `.github/workflows/release.yml`
@@ -710,7 +714,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | **done** | P1.1–P1.7 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, HPET-calibrated LAPIC timer at 1 kHz with PIT fallback/reference (#126, 2026-10-11), ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
 | P2 Caps/IPC/Budgets | **done** (2026-10-11) | Epic #55. **Done:** P2.1 `carv-abi` (#56), P2.2 `carv-caps` (#57), P2.3 `carv-budget` (#58), P2.10 ABI freeze (#65); P2.4–P2.9 (#59–#64) completed 2026-10-06 — kernel objects with state behind `invoke`, ring-3 entry and context switch, preemptive budgeted scheduler, blocking IPC with capability transfer, IRQ → Notification, `init` loaded from a Limine module. **Bugs:** #140 fixed 2026-10-01, #142 fixed 2026-10-05, #141 fixed 2026-10-06 (cross-CSpace derivation tree in `carv-caps`). Every kernel allocation charges a `carv-budget` Budget (objects to the creator's budget, the heap to its own). ADR-0003 (ABI v1 addendum: syscall results, `invoke` methods, root CSpace) accepted by the maintainer 2026-10-11; sign-off validated with `cargo xtask test` (host tests, 42 in-kernel tests, 7 smoke scenarios) and epic #55 closed |
-| P3 Runtime & svcmgr | not started | Epic #66 |
+| P3 Runtime & svcmgr | not started (0/4) | Epic #66; scheduled for Iteration 3 beginning 2026-10-24 |
 | P4 Drivers | not started | Epic #78 |
 | P5 Versioned Store | not started | Epic #83 |
 | P6 Shell & Coreutils | not started | Epic #90; no iteration assigned yet — only Iterations 1–5 exist |

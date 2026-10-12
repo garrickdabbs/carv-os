@@ -29,7 +29,7 @@ anything to work.
 
 ## Status
 
-**Phases 0 and 1 are complete** (2026-09-28); the latest release is
+**Phases 0, 1 and 2 are complete** (2026-10-11). The latest tagged release is
 [`v0.1.1`](https://github.com/garrickdabbs/carv-os/releases/tag/v0.1.1), signed, attested and
 byte-for-byte reproducible on any machine. Today CarvOS boots under Limine on UEFI and BIOS and, in
 order: brings up the serial console, loads a GDT/TSS/IDT with a handler for every CPU exception,
@@ -44,6 +44,23 @@ There is no user space or filesystem yet. Phase 2 is in progress: the ABI crate 
 capability and budget libraries are done, and the kernel has foundations for an object registry,
 syscall MSR setup, a scheduler model, IPC endpoints and IRQ routing, but no code runs in ring 3
 yet. Progress is tracked in
+byte-for-byte reproducible on any machine; the completed Phase 2 work is currently unreleased on
+`main`.
+
+Today CarvOS boots under Limine on UEFI and BIOS, initializes the x86_64 platform (serial,
+GDT/TSS/IDT, frame allocator, paging, heap, LAPIC, ACPI and PCIe), and brings up a
+capability-protected kernel object registry. Kernel allocations are charged to budgets; a
+preemptive scheduler enforces CPU budgets; blocking IPC transfers badges and revocable
+capabilities; and I/O APIC interrupts can signal user-space Notifications. The kernel then loads
+`userland/init` from a Limine module into a fresh address space and runs it in ring 3 with its root
+CSpace. Forty-two in-kernel tests and seven boot scenarios (UEFI, BIOS, panic, double fault, page
+fault, stack overflow, heap exhaustion) run on every PR.
+
+`init` is the only user-space program today: it prints through `debug_putc`, creates an endpoint via
+`invoke`, and waits on it. There is no service manager, filesystem, shell or device driver yet.
+Phase 3 is next (epic
+[#66](https://github.com/garrickdabbs/carv-os/issues/66), 0/4 tasks complete; scheduled for the
+project board's Iteration 3 beginning 2026-10-24). Progress is tracked in
 [`docs/PLAN.md` §11](docs/PLAN.md#11-status-tracker),
 [`CHANGELOG.md`](CHANGELOG.md), and the
 [CarvOS Prototype project board](https://github.com/users/garrickdabbs/projects/3) (one issue per
@@ -207,15 +224,16 @@ A rolling, unsigned `nightly` pre-release tracks `main`. All `0.y.z` releases ar
 
 ```
 kernel/          chisel, the microkernel (no_std, x86_64-unknown-none):
-                   arch/x86_64 (GDT, IDT, ports, PIC, PIT, local APIC, syscall MSRs), mm (frames,
-                   paging, heap), platform (ACPI, PCI), objects, ipc, scheduler, elf, serial
-                   console, sync primitives, in-kernel tests
+                   arch/x86_64 (GDT, IDT, ports, PIC, PIT, APIC, syscalls), mm (frames, address
+                   spaces, paging, heap, kernel stacks), platform (ACPI, PCI), capability-backed
+                   objects, budgeted scheduler, blocking IPC, ELF loader, serial, kernel/ring-3 tests
 crates/          pure, host-testable libraries: carv-frames (bitmap frame allocator), carv-abi
                    (syscall/IPC ABI types), carv-caps (CSpace + derivation tree), carv-budget
                    (CPU/memory/token-bucket accounting)
+userland/init/   minimal ring-3 root task loaded as boot():/boot/init (P2.9)
 xtask/           cargo xtask: build, limine, image, run, smoke, test, perf, docs-gate, release-check, help
 docs/PLAN.md     design, roadmap with task IDs, GitHub infrastructure, status
-docs/abi.md      syscall and IPC ABI (v1, ADR-0002)
+docs/abi.md      syscall and IPC ABI (v1, ADR-0002 plus the accepted ADR-0003 addendum)
 docs/adr/        architecture decision records
 .github/         CI workflows, Dependabot, CODEOWNERS, PR and issue templates
 CLAUDE.md        rules for AI coding agents working in this repo
@@ -223,7 +241,7 @@ CHANGELOG.md     Keep-a-Changelog; every PR adds a line under Unreleased
 SECURITY.md      how to report a vulnerability
 deny.toml        cargo-deny policy
 ```
-`services/` (user-space drivers and servers) and `userland/` (shell and tools) appear in later phases.
+`services/` is planned from Phase 3 onward; the shell and core commands join `userland/` in Phase 6.
 
 ## Contributing
 

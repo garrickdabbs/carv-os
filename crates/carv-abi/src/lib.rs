@@ -14,7 +14,7 @@ use core::ops::{BitOr, BitOrAssign};
 #[repr(u64)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Syscall {
-    /// Write one debugging byte (available only in debug builds).
+    /// Write one debugging byte (available in all builds until the P3.4 console service).
     DebugPutc = 0,
     /// Send a message to an endpoint.
     Send = 1,
