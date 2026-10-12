@@ -450,7 +450,7 @@ Details:
 | Actions supply chain | Every action pinned to a **full commit SHA** (Dependabot bumps them); top-level `permissions: contents: read`, elevated per job only (`id-token: write`, `attestations: write`, `contents: write` for release); no long-lived secrets anywhere, signing is keyless via OIDC | all workflows |
 | Static analysis | **CodeQL** code scanning (Rust + Actions) on PRs, `main` and weekly; **OpenSSF Scorecard** weekly with a README badge, target ≥ 7 by Phase 9 — *both live* | `codeql.yml`, `scorecard.yml` |
 | Secrets & reporting | Secret scanning + push protection, Dependabot alerts + security updates, **private vulnerability reporting** — *all enabled 2026-09-27 when the repo went public*; `SECURITY.md` with the disclosure process and a plain statement that this is a hobby OS with no security guarantees | repo settings, `SECURITY.md` |
-| Kernel hardening tests — *partial; full P9.4 is open (#122)* | Phase 2 tests cover user-map W^X, per-thread kernel-stack guard pages, SMEP/SMAP setup and user/kernel fault isolation; stack canaries and KASLR-lite remain planned | in-kernel tests; P9.4 |
+| Kernel hardening tests — *partial; full P9.4 is open (#122)* | Phase 2 tests cover user-map W^X, per-thread kernel-stack guard pages and user/kernel fault isolation; SMEP/SMAP are enabled but not directly asserted; stack canaries and KASLR-lite remain planned | in-kernel tests; P9.4 |
 | Threat model — *planned, P9.5 (#123)* | `docs/threat-model.md` will list assets, trust boundaries and their controls; the file does not exist yet | planned for `docs/` |
 
 **Visibility:** the repository has been public since 2026-09-27, so CodeQL, secret-scanning push
