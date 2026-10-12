@@ -6,6 +6,11 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Fixed
+- P3.1: `carv-rt` rustdoc no longer breaks the host-target `cargo doc` build — cross-references to the
+  `target_os = "none"`-gated `runtime`, `sys` and `set_console_cap` items are plain code spans, not
+  intra-doc links, so they resolve on both targets (#67).
+
 ### Added
 - P3.1: `carv-rt`, the user-space runtime (#67): `entry!` defining `_start`, one wrapper per syscall and
   `invoke` method, a global allocator whose heap grows by mapping frames from the program's budget

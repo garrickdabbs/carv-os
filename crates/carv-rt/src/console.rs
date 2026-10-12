@@ -2,7 +2,7 @@
 //!
 //! Until the `cons` service exists (P3.4) output goes to the kernel's `debug_putc` syscall. A
 //! program that is handed a *console capability* — an endpoint capability whose receiver is a
-//! console server — calls [`set_console_cap`] and from then on its output is sent there as
+//! console server — calls `set_console_cap` and from then on its output is sent there as
 //! [`WRITE`] messages instead, so the program needs no ambient output authority.
 //!
 //! The message format is defined here so that the client (this crate) and the server (P3.4)
