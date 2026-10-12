@@ -29,23 +29,10 @@ anything to work.
 
 ## Status
 
-**Phases 0, 1 and 2 are complete** (2026-10-11). The latest tagged release is
-[`v0.1.1`](https://github.com/garrickdabbs/carv-os/releases/tag/v0.1.1), signed, attested and
-byte-for-byte reproducible on any machine. Today CarvOS boots under Limine on UEFI and BIOS and, in
-order: brings up the serial console, loads a GDT/TSS/IDT with a handler for every CPU exception,
-builds a physical frame allocator from the memory map, adopts the bootloader's page tables with its
-own mapper, installs a 1 MiB kernel heap (`alloc` works), masks the legacy PICs and runs the local
-APIC timer at 1 kHz (calibrated against the ACPI HPET, with a PIT fallback), parses the ACPI tables
-(MADT, HPET, MCFG), enumerates PCI(e) through ECAM
-(virtio-blk and virtio-net are found), then idles. Twenty-two in-kernel tests and seven boot scenarios
-(UEFI, BIOS, panic, double fault, page fault, stack overflow, heap exhaustion) run on every PR.
-
-There is no user space or filesystem yet. Phase 2 is in progress: the ABI crate and the pure
-capability and budget libraries are done, and the kernel has foundations for an object registry,
-syscall MSR setup, a scheduler model, IPC endpoints and IRQ routing, but no code runs in ring 3
-yet. Progress is tracked in
-byte-for-byte reproducible on any machine; the completed Phase 2 work is currently unreleased on
-`main`.
+**Phases 0, 1 and 2 are complete** (2026-10-11), and Phase 3 is under way. The latest tagged release
+is [`v0.1.1`](https://github.com/garrickdabbs/carv-os/releases/tag/v0.1.1), signed, attested and
+byte-for-byte reproducible on any machine; the completed Phase 2 and P3.1 work is currently unreleased
+on `main`.
 
 Today CarvOS boots under Limine on UEFI and BIOS, initializes the x86_64 platform (serial,
 GDT/TSS/IDT, frame allocator, paging, heap, LAPIC, ACPI and PCIe), and brings up a
