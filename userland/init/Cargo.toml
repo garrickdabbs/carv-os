@@ -10,3 +10,4 @@ build = "build.rs"
 
 [target.'cfg(target_os = "none")'.dependencies]
 carv-abi = { path = "../../crates/carv-abi" }
+carv-rt = { path = "../../crates/carv-rt" }

@@ -225,8 +225,8 @@ with `E_BUDGET` when the budget is used up.
 carv-os/
 ├── .github/
 │   ├── workflows/              # one workflow per README badge (§7.2)
-│   │   ├── build.yml          # `build`: fmt, clippy (host + kernel), debug/release build, host tests, ISO artifact
-│   │   ├── ci.yml              # `boot-smoke`: host + in-kernel tests and seven boot scenarios in QEMU
+│   │   ├── build.yml          # `build`: fmt, clippy (host + kernel + user space), debug/release build, host tests, ISO artifact
+│   │   ├── ci.yml              # `boot-smoke`: host + in-kernel tests and eight boot scenarios in QEMU
 │   │   ├── security.yml       # `security`: cargo deny, cargo audit, unsafe inventory, SHA-pinned-action check
 │   │   ├── docs.yml            # `docs`: docs-gate, rustdoc -D warnings, lychee markdown link check
 │   │   ├── perf.yml            # `perf`: cargo xtask perf size/boot-time budgets
@@ -261,7 +261,7 @@ carv-os/
 │   ├── carv-budget/          # accounting math, token buckets (pure)
 │   ├── carv-value/           # Value model + CBOR codec + schema types (planned, P6.1)
 │   ├── carv-vstore-core/     # object store format, tree/commit logic (planned, P5.2)
-│   └── carv-rt/              # user-space runtime: _start, syscalls, allocator, IPC helpers, spawn (planned, P3.1)
+│   └── carv-rt/              # user-space runtime: _start, syscalls, growable heap, panic → exit, println! (P3.1); IPC helpers and spawn follow (P3.2/P3.3)
 ├── services/                  # planned: none exist yet (Phases 3–8)
 │   ├── svcmgr/                # spawns & supervises services, records program hashes
 │   ├── cons/                  # serial/framebuffer console server
@@ -270,7 +270,8 @@ carv-os/
 │   ├── netd/                  # virtio-net + smoltcp
 │   └── authd/                 # users, login, grants
 ├── userland/
-│   ├── init/                  # minimal root task, loaded from Limine and running in ring 3 (P2.9)
+│   ├── init/                  # minimal root task, loaded from Limine and running in ring 3 (P2.9), built on carv-rt
+│   ├── hello/                 # hello-world program on carv-rt, built separately from the kernel (P3.1); the `hello` smoke scenario boots it as the root task
 │   ├── sh/                    # typed shell (planned, Phase 6)
 │   └── coreutils/             # ls cat cp mv rm mkdir stat log undo ps top caps whoami ...
 └── tests/                     # planned; integration checks live in `cargo xtask smoke`/`test` today
@@ -400,8 +401,8 @@ history. All trigger on `pull_request`, `push` to `main`, `merge_group` and `wor
 
 | Workflow (badge) | Job (required check) | What it does | Timeout |
 |---|---|---|---|
-| **Build** `build.yml` | `build` | `cargo fmt --check`; clippy `-D warnings` for host crates *and* `-p chisel --target x86_64-unknown-none`; `cargo xtask build` debug and `--release` (higher-half layout verified); build the kernel test binary; `cargo test --workspace --exclude chisel --locked`; `cargo xtask image --release`; ISO uploaded as a 7-day artifact on `main` | 20 min |
-| **CI** `ci.yml` | `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask test --timeout 120`: host unit tests, the in-kernel test kernel booted in QEMU (`isa-debug-exit` 33/35), and all seven boot scenarios (UEFI, BIOS, panic, double fault, page fault, stack overflow, OOM) with serial output asserted; uploads `target/test/*.log` and `target/smoke/*.log`. Job name stays `boot-smoke` (required check) | 30 min |
+| **Build** `build.yml` | `build` | `cargo fmt --check`; clippy `-D warnings` for host crates, `-p chisel --target x86_64-unknown-none` *and* the user-space crates (`-p carv-rt -p init -p hello`); `cargo xtask build` debug and `--release` (higher-half layout verified); build the kernel test binary; `cargo test --workspace --exclude chisel --locked`; `cargo xtask image --release`; ISO uploaded as a 7-day artifact on `main` | 20 min |
+| **CI** `ci.yml` | `boot-smoke` | install `qemu-system-x86 ovmf xorriso`; enable KVM (below); `cargo xtask test --timeout 120`: host unit tests, the in-kernel test kernel booted in QEMU (`isa-debug-exit` 33/35), and all eight boot scenarios (UEFI, BIOS, `hello`, panic, double fault, page fault, stack overflow, OOM) with serial output asserted; uploads `target/test/*.log` and `target/smoke/*.log`. Job name stays `boot-smoke` (required check) | 30 min |
 | **Security** `security.yml` | `security` | `cargo deny check` (advisories, licenses, bans, sources); `cargo audit --deny warnings` with a fresh RustSec DB; clippy with only `undocumented_unsafe_blocks` as an error; unsafe inventory in the job summary; every `uses:` pinned to a 40-hex SHA; no `write-all` permissions. Also runs **weekly** so new advisories surface without a code change | 15 min |
 | **Docs** `docs.yml` | `docs` | `docs-gate` run from the **base branch's** xtask against the PR checkout (a PR cannot weaken the gate it is judged by); requires *new content under Unreleased* in CHANGELOG.md, a *new* ADR file for `docs/abi.md`, and a skip marker only with a ≥ 20-character reason (PRs; Dependabot exempt); rustdoc with `RUSTDOCFLAGS=-D warnings` (crate roots deny `missing_docs`); `lychee --offline` checks every local Markdown link and anchor — or, in a release PR, a new `## [x.y.z]` version heading | 15 min |
 | **Performance** `perf.yml` | `perf` | `cargo xtask perf --runs 5`: release-kernel loaded size, ISO size, boot-to-banner and banner-to-`init: idle` (median, KVM) against budgets in `xtask`; over budget fails; report to the job summary | 30 min |
@@ -472,7 +473,7 @@ protection, Scorecard and rulesets are all available at no cost.
 - **Nightly — `.github/workflows/nightly.yml`** (`schedule: cron '0 6 * * *'` + `workflow_dispatch`):
   the current long-running and drift-detecting job:
   - runs the full release-profile test suite;
-  - boots one release ISO through all seven smoke scenarios in 10 consecutive rounds (70 boots total),
+  - boots one release ISO through all eight smoke scenarios in 10 consecutive rounds (80 boots total),
     checking `cargo xtask smoke`'s exit code directly rather than filtering it through `grep`;
   - runs the 10-sample performance budgets and `cargo audit` against a fresh RustSec database;
   - builds and lints the kernel with the newest unpinned nightly as an informational drift check;
@@ -582,7 +583,7 @@ phase's interfaces are frozen.
 ### Phase 3 — User-Space Runtime & Service Manager
 | ID | Task | AC |
 |---|---|---|
-| P3.1 | `carv-rt`: `_start`, syscall wrappers, user heap (grows by mapping frames from the budget), panic → exit, `println!` via a console cap | Hello-world user program built separately from the kernel |
+| P3.1 | `carv-rt`: `_start`, syscall wrappers, user heap (grows by mapping frames from the budget), panic → exit, `println!` via a console cap | Hello-world user program built separately from the kernel — **done 2026-10-12** (#67): `crates/carv-rt` plus `userland/hello`; the `hello` smoke scenario boots it and checks its output, including heap growth to 1 MiB |
 | P3.2 | IPC helper layer: typed request/response (`#[derive]`-based or hand-rolled), server loop macro | Echo service + client test |
 | P3.3 | `spawn(elf, caps, budget)` in `carv-rt` + `svcmgr` (loads ELFs from a Limine-module initrd for now, records BLAKE3 of each binary, restarts crashed services) | `svcmgr` starts `cons`; killing `cons` → restarted, logged |
 | P3.4 | `cons` console service: serial input line discipline, output; each client gets its own console cap | Two processes print through `cons` without garbled output |
@@ -714,7 +715,7 @@ If blocked by a design question, write it up in the PR and stop rather than gues
 | P0 Scaffolding & Boot | **done** | P0.1–P0.8 complete 2026-09-27; released as `v0.1.0`; `v0.1.1` (2026-09-27) adds P1.1–P1.3 and reproducible builds |
 | P1 Kernel Core | **done** | P1.1–P1.7 done 2026-09-27 (GDT/IDT, `carv-frames` + frame allocator, paging over Limine's tables, kernel heap, HPET-calibrated LAPIC timer at 1 kHz with PIT fallback/reference (#126, 2026-10-11), ACPI summary, PCI(e) enumeration over ECAM); **Phase 1 complete** |
 | P2 Caps/IPC/Budgets | **done** (2026-10-11) | Epic #55. **Done:** P2.1 `carv-abi` (#56), P2.2 `carv-caps` (#57), P2.3 `carv-budget` (#58), P2.10 ABI freeze (#65); P2.4–P2.9 (#59–#64) completed 2026-10-06 — kernel objects with state behind `invoke`, ring-3 entry and context switch, preemptive budgeted scheduler, blocking IPC with capability transfer, IRQ → Notification, `init` loaded from a Limine module. **Bugs:** #140 fixed 2026-10-01, #142 fixed 2026-10-05, #141 fixed 2026-10-06 (cross-CSpace derivation tree in `carv-caps`). Every kernel allocation charges a `carv-budget` Budget (objects to the creator's budget, the heap to its own). ADR-0003 (ABI v1 addendum: syscall results, `invoke` methods, root CSpace) accepted by the maintainer 2026-10-11; sign-off validated with `cargo xtask test` (host tests, 42 in-kernel tests, 7 smoke scenarios) and epic #55 closed |
-| P3 Runtime & svcmgr | not started (0/4) | Epic #66; scheduled for Iteration 3 beginning 2026-10-24 |
+| P3 Runtime & svcmgr | in progress (1/4) | Epic #66; scheduled for Iteration 3 beginning 2026-10-24. **Done:** P3.1 `carv-rt` (#67) — `_start` via `entry!`, a wrapper per syscall and `invoke` method, a heap growing page by page through `ADDRESS_SPACE_MAP` (charged to the program's budget), panic → print and exit the thread, `println!` over `debug_putc` or a console capability (provisional `WRITE` message encoding for P3.4); `userland/hello` is built separately and booted as the root task by the `hello` smoke scenario; `init` now uses `carv-rt` |
 | P4 Drivers | not started | Epic #78 |
 | P5 Versioned Store | not started | Epic #83 |
 | P6 Shell & Coreutils | not started | Epic #90; no iteration assigned yet — only Iterations 1–5 exist |

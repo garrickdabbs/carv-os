@@ -6,7 +6,24 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 
 ## [Unreleased]
 
+### Fixed
+- P3.1: `carv-rt` heap host tests no longer perform direct raw-pointer writes, which removes
+  CodeQL's false-positive invalid-pointer alerts while preserving growth, reuse, alignment and
+  allocation-failure coverage (#67).
+- P3.1: `carv-rt` rustdoc no longer breaks the host-target `cargo doc` build — cross-references to the
+  `target_os = "none"`-gated `runtime`, `sys` and `set_console_cap` items are plain code spans, not
+  intra-doc links, so they resolve on both targets (#67).
+
 ### Added
+- P3.1: `carv-rt`, the user-space runtime (#67): `entry!` defining `_start`, one wrapper per syscall and
+  `invoke` method, a global allocator whose heap grows by mapping frames from the program's budget
+  (`ADDRESS_SPACE_MAP`; allocation fails cleanly when the budget is used up), a panic handler that prints
+  and exits the thread, and `print!`/`println!` over `debug_putc` or a console capability (provisional
+  `WRITE` message encoding for the P3.4 `cons` service). Pure parts (heap growth, console encoding,
+  status decoding, spin lock) have host tests. New `userland/hello` hello-world program, built by
+  `cargo xtask build` and booted as the root task by a new `hello` smoke scenario (eight scenarios now);
+  `userland/init` is rebuilt on `carv-rt` and the shared user linker script moved to
+  `crates/carv-rt/linker.ld`. CI `build` also runs clippy on the user-space crates.
 - LAPIC timer calibration now uses the ACPI-discovered HPET main counter, retains the PIT as a
   fallback and independent reference, and checks both measurements agree within 5% (#126).
 - Phase 2 signed off (#55): ADR-0003 (ABI v1 addendum) accepted by the maintainer; `docs/PLAN.md`
@@ -166,6 +183,15 @@ review follow-ups and fixes from the first day of public development.
 - Release workflow: the build job declares its read-only `contents: read` token explicitly (#35).
 
 ### Added
+- P3.1: `carv-rt`, the user-space runtime (#67): `entry!` defining `_start`, one wrapper per syscall and
+  `invoke` method, a global allocator whose heap grows by mapping frames from the program's budget
+  (`ADDRESS_SPACE_MAP`; allocation fails cleanly when the budget is used up), a panic handler that prints
+  and exits the thread, and `print!`/`println!` over `debug_putc` or a console capability (provisional
+  `WRITE` message encoding for the P3.4 `cons` service). Pure parts (heap growth, console encoding,
+  status decoding, spin lock) have host tests. New `userland/hello` hello-world program, built by
+  `cargo xtask build` and booted as the root task by a new `hello` smoke scenario (eight scenarios now);
+  `userland/init` is rebuilt on `carv-rt` and the shared user linker script moved to
+  `crates/carv-rt/linker.ld`. CI `build` also runs clippy on the user-space crates.
 - P1.3: paging — `kernel::mm::paging` adopts Limine's page tables through the HHDM (`OffsetPageTable`) with
   `map`/`unmap`/`translate` and a kernel dynamic region at `0xffff9000_00000000`; in-kernel test maps, writes,
   reads back through the HHDM alias, translates and unmaps; new smoke scenarios `pfault` (unmapped access is
@@ -196,6 +222,15 @@ Phase 0 complete: CarvOS boots under Limine on UEFI and BIOS, brings up a serial
 in-kernel tests, and ships through a reproducible, signed, attested release pipeline.
 
 ### Added
+- P3.1: `carv-rt`, the user-space runtime (#67): `entry!` defining `_start`, one wrapper per syscall and
+  `invoke` method, a global allocator whose heap grows by mapping frames from the program's budget
+  (`ADDRESS_SPACE_MAP`; allocation fails cleanly when the budget is used up), a panic handler that prints
+  and exits the thread, and `print!`/`println!` over `debug_putc` or a console capability (provisional
+  `WRITE` message encoding for the P3.4 `cons` service). Pure parts (heap growth, console encoding,
+  status decoding, spin lock) have host tests. New `userland/hello` hello-world program, built by
+  `cargo xtask build` and booted as the root task by a new `hello` smoke scenario (eight scenarios now);
+  `userland/init` is rebuilt on `carv-rt` and the shared user linker script moved to
+  `crates/carv-rt/linker.ld`. CI `build` also runs clippy on the user-space crates.
 - P0.1: Cargo workspace, pinned nightly toolchain, higher-half `chisel` kernel link, `cargo xtask build`.
 - P0.2: Limine boot (v11.4.1, every file SHA-256 pinned), `cargo xtask image` (UEFI + BIOS bootable ISO
   plus a blank virtio data disk), `cargo xtask run` (QEMU with OVMF, KVM auto-detect, `--bios`,

@@ -1,13 +1,10 @@
 use std::{env, path::PathBuf};
 
 fn main() {
-    println!("cargo:rerun-if-changed=linker.ld");
+    let linker = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set"))
+        .join("../../crates/carv-rt/linker.ld");
+    println!("cargo:rerun-if-changed={}", linker.display());
     if env::var("TARGET").as_deref() == Ok("x86_64-unknown-none") {
-        let manifest =
-            PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set"));
-        println!(
-            "cargo:rustc-link-arg-bins=-T{}",
-            manifest.join("linker.ld").display()
-        );
+        println!("cargo:rustc-link-arg-bins=-T{}", linker.display());
     }
 }

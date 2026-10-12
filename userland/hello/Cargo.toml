@@ -1,0 +1,12 @@
+[package]
+name = "hello"
+description = "Hello-world ring-3 program for CarvOS, built on carv-rt"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+build = "build.rs"
+
+[target.'cfg(target_os = "none")'.dependencies]
+carv-rt = { path = "../../crates/carv-rt" }
