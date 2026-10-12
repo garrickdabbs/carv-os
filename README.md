@@ -53,13 +53,15 @@ capability-protected kernel object registry. Kernel allocations are charged to b
 preemptive scheduler enforces CPU budgets; blocking IPC transfers badges and revocable
 capabilities; and I/O APIC interrupts can signal user-space Notifications. The kernel then loads
 `userland/init` from a Limine module into a fresh address space and runs it in ring 3 with its root
-CSpace. Forty-two in-kernel tests and seven boot scenarios (UEFI, BIOS, panic, double fault, page
+CSpace. Forty-two in-kernel tests and eight boot scenarios (UEFI, BIOS, `hello`, panic, double fault, page
 fault, stack overflow, heap exhaustion) run on every PR.
 
-`init` is the only user-space program today: it prints through `debug_putc`, creates an endpoint via
-`invoke`, and waits on it. There is no service manager, filesystem, shell or device driver yet.
-Phase 3 is next (epic
-[#66](https://github.com/garrickdabbs/carv-os/issues/66), 0/4 tasks complete; scheduled for the
+User space is built on `carv-rt` (P3.1): `_start`, one wrapper per syscall, a heap that grows by mapping
+frames charged to the program's budget, panic → exit, and `println!` (to `debug_putc` until a console
+capability is installed). `init` creates an endpoint via `invoke` and waits on it; `userland/hello` is a
+hello-world built separately from the kernel, which the `hello` boot scenario runs as the root task.
+There is no service manager, filesystem, shell or device driver yet. Phase 3 is under way (epic
+[#66](https://github.com/garrickdabbs/carv-os/issues/66), 1/4 tasks complete; scheduled for the
 project board's Iteration 3 beginning 2026-10-24). Progress is tracked in
 [`docs/PLAN.md` §11](docs/PLAN.md#11-status-tracker),
 [`CHANGELOG.md`](CHANGELOG.md), and the
@@ -126,7 +128,7 @@ Everything goes through `cargo xtask` (a small Rust program in [`xtask/`](xtask/
 
 | Command | What it does |
 |---|---|
-| `cargo xtask build [--release]` | Build the `chisel` kernel for `x86_64-unknown-none` and verify it is linked in the higher half, then build the ring-3 root task `userland/init` into `target/userland/` (every ISO ships it as the Limine module `boot():/boot/init`). |
+| `cargo xtask build [--release]` | Build the `chisel` kernel for `x86_64-unknown-none` and verify it is linked in the higher half, then build the ring-3 programs `userland/init` and `userland/hello` into `target/userland/` (every ISO ships `init` as the Limine module `boot():/boot/init`). |
 | `cargo xtask image [--release]` | Build a bootable ISO (`target/carv-os.iso`, UEFI + BIOS) and a blank 64 MiB virtio disk (`target/data.img`). `--release` strips debuginfo from the kernel and init copies inside the ISO; the unstripped ELFs stay in `target/`. |
 | `cargo xtask limine` | Fetch and verify the pinned Limine bootloader files (done automatically by `image`). |
 | `cargo xtask run [flags]` | Build the image and boot it in QEMU with the serial console on your terminal. `--iso PATH` boots an existing image (e.g. a release) instead. |
@@ -177,6 +179,7 @@ cargo xtask perf                                                        # size a
 cargo fmt --all --check
 cargo clippy --workspace --exclude chisel --all-targets -- -D warnings  # host crates
 cargo clippy -p chisel --target x86_64-unknown-none -- -D warnings      # kernel
+cargo clippy -p carv-rt -p init -p hello --target x86_64-unknown-none -- -D warnings  # user space
 cargo deny check                                                        # advisories, licenses, sources
 cargo audit --deny warnings                                             # fresh RustSec database (cargo install cargo-audit)
 ```
@@ -229,8 +232,10 @@ kernel/          chisel, the microkernel (no_std, x86_64-unknown-none):
                    objects, budgeted scheduler, blocking IPC, ELF loader, serial, kernel/ring-3 tests
 crates/          pure, host-testable libraries: carv-frames (bitmap frame allocator), carv-abi
                    (syscall/IPC ABI types), carv-caps (CSpace + derivation tree), carv-budget
-                   (CPU/memory/token-bucket accounting)
-userland/init/   minimal ring-3 root task loaded as boot():/boot/init (P2.9)
+                   (CPU/memory/token-bucket accounting), carv-rt (user-space runtime: `_start`, syscalls, heap, `println!`;
+                   hardware parts target-gated, P3.1)
+userland/init/   minimal ring-3 root task loaded as boot():/boot/init (P2.9), built on carv-rt
+userland/hello/  hello-world ring-3 program on carv-rt (P3.1); the `hello` smoke scenario boots it as the root task
 xtask/           cargo xtask: build, limine, image, run, smoke, test, perf, docs-gate, release-check, help
 docs/PLAN.md     design, roadmap with task IDs, GitHub infrastructure, status
 docs/abi.md      syscall and IPC ABI (v1, ADR-0002 plus the accepted ADR-0003 addendum)

@@ -40,6 +40,10 @@ const KERNEL_TARGET: &str = "x86_64-unknown-none";
 const KERNEL_PACKAGE: &str = "chisel";
 const INIT_PACKAGE: &str = "init";
 const INIT_ISO_PATH: &str = "init";
+/// Ring-3 programs built separately from the kernel (`userland/*`, linked with `carv-rt`).
+/// `init` is the root task; `hello` is the P3.1 hello-world and can stand in for it (see the
+/// `hello` smoke scenario).
+const USERLAND_PACKAGES: &[&str] = &[INIT_PACKAGE, "hello"];
 /// Start of the top 2 GiB of the address space, where `kernel/linker.ld` places the kernel.
 const HIGHER_HALF_BASE: u64 = 0xffff_ffff_8000_0000;
 const ISO_NAME: &str = "carv-os.iso";
@@ -189,7 +193,9 @@ fn build(args: &[String]) -> Result<PathBuf, String> {
         _ => return Err(format!("unexpected arguments to build: {args:?}")),
     };
     let kernel = build_kernel(release)?;
-    let _init = build_init(release)?;
+    for package in USERLAND_PACKAGES {
+        build_userland(package, release)?;
+    }
     Ok(kernel)
 }
 
@@ -229,7 +235,8 @@ fn build_kernel(release: bool) -> Result<PathBuf, String> {
     Ok(kernel)
 }
 
-fn build_init(release: bool) -> Result<PathBuf, String> {
+/// Builds the ring-3 program `package` for the kernel target into `target/userland`.
+fn build_userland(package: &str, release: bool) -> Result<PathBuf, String> {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let userland_target = target_dir().join("userland");
     let mut cmd = Command::new(cargo);
@@ -240,7 +247,7 @@ fn build_init(release: bool) -> Result<PathBuf, String> {
         )
         .arg("build")
         .arg("--package")
-        .arg(INIT_PACKAGE)
+        .arg(package)
         .arg("--target")
         .arg(KERNEL_TARGET)
         .arg("--target-dir")
@@ -252,16 +259,16 @@ fn build_init(release: bool) -> Result<PathBuf, String> {
         .status()
         .map_err(|e| format!("failed to run cargo: {e}"))?;
     if !status.success() {
-        return Err("init build failed".into());
+        return Err(format!("{package} build failed"));
     }
 
     let profile = if release { "release" } else { "debug" };
-    let init = userland_target
+    let program = userland_target
         .join(KERNEL_TARGET)
         .join(profile)
-        .join(INIT_PACKAGE);
-    println!("init: {}", init.display());
-    Ok(init)
+        .join(package);
+    println!("{package}: {}", program.display());
+    Ok(program)
 }
 
 // ---------------------------------------------------------------- limine
@@ -340,8 +347,20 @@ fn image(args: &[String]) -> Result<PathBuf, String> {
 }
 
 fn build_image(release: bool, cmdline: &str) -> Result<PathBuf, String> {
+    build_image_with(release, cmdline, INIT_PACKAGE)
+}
+
+/// Like [`build_image`], but boots `root_task` (a [`USERLAND_PACKAGES`] entry) as `boot/init`.
+fn build_image_with(release: bool, cmdline: &str, root_task: &str) -> Result<PathBuf, String> {
     let kernel = build_kernel(release)?;
-    let iso = assemble_iso(&kernel, cmdline, &target_dir(), ISO_NAME, release)?;
+    let iso = assemble_iso(
+        &kernel,
+        cmdline,
+        &target_dir(),
+        ISO_NAME,
+        release,
+        root_task,
+    )?;
     ensure_data_disk()?;
     println!("image: {}", iso.display());
     Ok(iso)
@@ -365,7 +384,8 @@ fn ensure_data_disk() -> Result<PathBuf, String> {
 }
 
 /// Assembles a bootable ISO around `kernel` (any ELF built for the kernel target — the normal
-/// kernel or a test kernel) and the root-task init module in `out_dir/iso_root`, writing
+/// kernel or a test kernel) and the root-task module (`root_task`, installed as `boot/init`) in
+/// `out_dir/iso_root`, writing
 /// `out_dir/iso_name`. Release images get debuginfo-stripped copies of the kernel and init (#29);
 /// the unstripped kernel ELF stays in `target/` and ships separately as `chisel-vX.Y.Z.elf`.
 fn assemble_iso(
@@ -374,9 +394,10 @@ fn assemble_iso(
     out_dir: &Path,
     iso_name: &str,
     release: bool,
+    root_task: &str,
 ) -> Result<PathBuf, String> {
     let limine = ensure_limine()?;
-    let init = build_init(release)?;
+    let init = build_userland(root_task, release)?;
 
     let root = out_dir.join("iso_root");
     if root.exists() {
@@ -779,6 +800,8 @@ struct Scenario {
     name: &'static str,
     bios: bool,
     cmdline: &'static str,
+    /// The `userland/*` program booted as the root task.
+    root_task: &'static str,
     /// Every entry must appear on the serial console for the scenario to pass.
     expect: &'static [&'static str],
 }
@@ -788,6 +811,7 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
         name: "uefi",
         bios: false,
         cmdline: "",
+        root_task: INIT_PACKAGE,
         expect: &[
             "CarvOS chisel v",
             "bootloader: Limine",
@@ -804,6 +828,7 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
         name: "bios",
         bios: true,
         cmdline: "",
+        root_task: INIT_PACKAGE,
         expect: &[
             "CarvOS chisel v",
             "bootloader: Limine",
@@ -817,21 +842,36 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
         ],
     },
     Scenario {
+        name: "hello",
+        bios: false,
+        cmdline: "",
+        root_task: "hello",
+        expect: &[
+            "hello: hello, world from carv-rt",
+            "hello: sum of the first ten squares is 385",
+            "hello: grew the heap, 1 MiB checksum 179306496",
+            "hello: done",
+        ],
+    },
+    Scenario {
         name: "panic",
         bios: false,
         cmdline: "panic-test",
+        root_task: INIT_PACKAGE,
         expect: &["CarvOS chisel v", "chisel: PANIC at "],
     },
     Scenario {
         name: "dfault",
         bios: false,
         cmdline: "double-fault-test",
+        root_task: INIT_PACKAGE,
         expect: &["CarvOS chisel v", "chisel: DOUBLE FAULT"],
     },
     Scenario {
         name: "pfault",
         bios: false,
         cmdline: "page-fault-test",
+        root_task: INIT_PACKAGE,
         expect: &[
             "touching unmapped page",
             "PAGE FAULT accessing 0xffff900000100000",
@@ -841,12 +881,14 @@ const SMOKE_SCENARIOS: &[Scenario] = &[
         name: "sovflw",
         bios: false,
         cmdline: "stack-overflow-test",
+        root_task: INIT_PACKAGE,
         expect: &["recursing on a 16 KiB stack", "chisel: DOUBLE FAULT"],
     },
     Scenario {
         name: "oom",
         bios: false,
         cmdline: "oom-test",
+        root_task: INIT_PACKAGE,
         expect: &[
             "allocating 2 MiB from a 1024 KiB heap on purpose",
             "kernel heap exhausted: allocation of 2097152 bytes",
@@ -892,19 +934,19 @@ fn run_smoke(release: bool, timeout: Duration, iso: Option<&Path>) -> Result<(),
     let mut skipped = 0usize;
     for sc in SMOKE_SCENARIOS {
         let iso = match iso {
-            Some(p) if sc.cmdline.is_empty() => {
+            Some(p) if sc.cmdline.is_empty() && sc.root_task == INIT_PACKAGE => {
                 ensure_data_disk()?;
                 p.to_path_buf()
             }
             Some(_) => {
                 println!(
-                    "smoke: {:<6} SKIP  (needs its own cmdline; not applicable to --iso)",
+                    "smoke: {:<6} SKIP  (needs its own cmdline or root task; not applicable to --iso)",
                     sc.name
                 );
                 skipped += 1;
                 continue;
             }
-            None => build_image(release, sc.cmdline)?,
+            None => build_image_with(release, sc.cmdline, sc.root_task)?,
         };
         let opts = RunOpts {
             release,
@@ -1641,7 +1683,7 @@ fn test(args: &[String]) -> Result<(), String> {
     }
     if opts.integration {
         results.push((
-            "boot smoke (UEFI, BIOS, panic, double fault, page fault, stack overflow, OOM)",
+            "boot smoke (UEFI, BIOS, hello, panic, double fault, page fault, stack overflow, OOM)",
             run_smoke(opts.release, opts.timeout, None)
                 .map(|()| format!("{} scenarios passed", SMOKE_SCENARIOS.len())),
         ));
@@ -1694,7 +1736,14 @@ fn kernel_tests(opts: &TestOpts) -> Result<String, String> {
     let exe = kernel_test_executable(opts.release)?;
     let out_dir = target_dir().join("test");
     fs::create_dir_all(&out_dir).map_err(|e| format!("creating {}: {e}", out_dir.display()))?;
-    let iso = assemble_iso(&exe, "", &out_dir, "carv-os-test.iso", opts.release)?;
+    let iso = assemble_iso(
+        &exe,
+        "",
+        &out_dir,
+        "carv-os-test.iso",
+        opts.release,
+        INIT_PACKAGE,
+    )?;
     let run_opts = RunOpts {
         release: opts.release,
         bios: false,

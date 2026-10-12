@@ -4,13 +4,13 @@ CarvOS (CARV: Capability Authority & Resource Versioning) is a hobby capability-
 Read it before starting any task.
 
 ## Commands
-- `cargo xtask build` — build the `chisel` kernel and the ring-3 root task `userland/init` (into `target/userland/`; shipped as the Limine module `boot():/boot/init`); services are added in Phase 3+
+- `cargo xtask build` — build the `chisel` kernel and the ring-3 programs `userland/init` and `userland/hello` (into `target/userland/`; `init` is shipped as the Limine module `boot():/boot/init`); user programs link `crates/carv-rt`; services are added in Phase 3+
 - `cargo xtask image [--release]` — build `target/carv-os.iso` (UEFI + BIOS) and `target/data.img`; `--release` strips debuginfo from the ISO's kernel and init copies (reproducible builds, #29)
 - `cargo xtask run [--release] [--bios] [--debug] [--timeout SECS]` — boot in QEMU (serial on stdio); `--debug` logs int/reset to `target/qemu.log`; always pass `--timeout` in scripts
-- `cargo xtask smoke [--release] [--timeout SECS]` — boot the UEFI, BIOS, panic, double-fault, page-fault, stack-overflow and out-of-memory scenarios in QEMU and check serial output; logs in `target/smoke/`
+- `cargo xtask smoke [--release] [--timeout SECS]` — boot the UEFI, BIOS, hello (the `userland/hello` root task), panic, double-fault, page-fault, stack-overflow and out-of-memory scenarios in QEMU and check serial output; logs in `target/smoke/`
 - `cargo xtask docs-gate [--base REF]` — fail (exit 2) if code changed without documentation; CI runs it on every PR from the base branch's xtask. Run it before opening a PR. (Optional, local only: a Claude Code Stop hook in your own `.claude/settings.local.json` — `.claude/` is gitignored and never committed, because a shared settings file would run shell commands on every contributor's machine.)
 - `cargo xtask perf [--runs N]` — size and boot-time budgets (release build, median of N boots); CI fails a PR that exceeds them, so if you grow the kernel deliberately, raise the budget constants in `xtask` in the same PR and say why
-- `cargo xtask test [--host] [--kernel] [--integration]` — host unit tests + in-kernel `#[test_case]` tests booted in QEMU (`isa-debug-exit`) + boot smoke. **Must pass before any PR.** Also run `cargo xtask perf`, clippy (host: `--workspace --exclude chisel`; kernel: `-p chisel --target x86_64-unknown-none`), fmt, `cargo deny check`.
+- `cargo xtask test [--host] [--kernel] [--integration]` — host unit tests + in-kernel `#[test_case]` tests booted in QEMU (`isa-debug-exit`) + boot smoke. **Must pass before any PR.** Also run `cargo xtask perf`, clippy (host: `--workspace --exclude chisel`; kernel: `-p chisel --target x86_64-unknown-none`; user space: `-p carv-rt -p init -p hello --target x86_64-unknown-none`), fmt, `cargo deny check`.
 - `cargo xtask gdb` — *planned, not implemented yet*: boot paused with gdb stub attached
 
 ## Rules
