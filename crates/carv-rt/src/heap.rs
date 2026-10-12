@@ -218,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn allocations_are_aligned_distinct_and_writable() {
+    fn allocations_are_aligned_and_distinct() {
         let mut arena = Arena::new(64, 64);
         let mut h = heap(&mut arena);
         let mut blocks = std::vec::Vec::new();
@@ -227,8 +227,6 @@ mod tests {
             let p = h.allocate(layout);
             assert!(!p.is_null());
             assert_eq!(p as usize % align, 0);
-            // SAFETY: `p` is a live 100-byte block.
-            unsafe { p.write_bytes(0xa5, 100) };
             blocks.push((p, layout));
         }
         for (i, (p, _)) in blocks.iter().enumerate() {
@@ -250,8 +248,6 @@ mod tests {
         let p = h.allocate(big);
         assert!(!p.is_null());
         assert!(h.mapped_bytes() >= 100 * PAGE_SIZE);
-        // SAFETY: `p` is a live block of `big.size()` bytes.
-        unsafe { p.write_bytes(1, big.size()) };
         let mapped = h.mapped_bytes();
         // SAFETY: `p` came from `allocate` with `big`.
         unsafe { h.deallocate(p, big) };

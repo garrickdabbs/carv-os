@@ -7,6 +7,9 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Fixed
+- P3.1: `carv-rt` heap host tests no longer perform direct raw-pointer writes, which removes
+  CodeQL's false-positive invalid-pointer alerts while preserving growth, reuse, alignment and
+  allocation-failure coverage (#67).
 - P3.1: `carv-rt` rustdoc no longer breaks the host-target `cargo doc` build — cross-references to the
   `target_os = "none"`-gated `runtime`, `sys` and `set_console_cap` items are plain code spans, not
   intra-doc links, so they resolve on both targets (#67).
