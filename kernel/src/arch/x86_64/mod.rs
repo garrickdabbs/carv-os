@@ -1,8 +1,9 @@
 //! x86_64 primitives: descriptor tables, exception handlers, port I/O, interrupt-flag control,
-//! the legacy PICs (masked), the PIT (calibration stopwatch) and the local APIC with its timer.
+//! the legacy PICs (masked), the PIT and HPET calibration clocks, and the local APIC timer.
 
 pub mod apic;
 pub mod gdt;
+pub mod hpet;
 pub mod idt;
 pub mod ioapic;
 pub mod pic;

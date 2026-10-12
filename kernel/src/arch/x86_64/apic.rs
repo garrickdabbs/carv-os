@@ -5,7 +5,8 @@
 //! page-faulted on the first attempt); [`init`] maps the page uncached at
 //! [`super::super::super::mm::paging::KERNEL_MMIO_BASE`] and reaches it with volatile accesses.
 //! The timer runs periodically at 1 kHz on
-//! [`TIMER_VECTOR`] after being calibrated against the PIT; every tick bumps [`ticks`]. Hardware
+//! [`TIMER_VECTOR`] after being calibrated against the HPET (with a PIT fallback); every tick bumps
+//! [`ticks`]. Hardware
 //! IRQ routing to user space (I/O APIC, `Irq` capabilities) is in [`super::ioapic`] (P2.8).
 
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -17,7 +18,7 @@ use x86_64::PhysAddr;
 use x86_64::VirtAddr;
 use x86_64::structures::paging::Page;
 
-use super::pit;
+use super::{hpet::Hpet, pit};
 use crate::mm::paging;
 
 /// IDT vector the timer fires on (first vector past the CPU exceptions).
@@ -51,6 +52,10 @@ const CALIBRATION_MS: u64 = 10;
 static BASE: AtomicU64 = AtomicU64::new(0);
 /// Timer interrupts handled since [`init`].
 static TICKS: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+static HPET_TICKS_PER_MS: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+static PIT_TICKS_PER_MS: AtomicU64 = AtomicU64::new(0);
 
 /// What [`init`] found and programmed; printed at boot.
 #[derive(Clone, Copy, Debug)]
@@ -59,8 +64,12 @@ pub struct Info {
     pub phys_base: u64,
     /// This CPU's APIC id.
     pub id: u32,
-    /// Timer ticks (after divide-by-16) per millisecond, as measured against the PIT.
+    /// Timer ticks (after divide-by-16) per millisecond used for the periodic timer.
     pub ticks_per_ms: u32,
+    /// Timer ticks per millisecond measured against the HPET, if one was available.
+    pub hpet_ticks_per_ms: Option<u32>,
+    /// Timer ticks per millisecond measured against the PIT reference.
+    pub pit_ticks_per_ms: u32,
 }
 
 fn read(reg: u64) -> u32 {
@@ -78,14 +87,14 @@ fn write(reg: u64, value: u32) {
     unsafe { core::ptr::write_volatile((base + reg) as *mut u32, value) }
 }
 
-/// Enables the local APIC, calibrates its timer against the PIT and starts it periodic at
-/// [`TIMER_HZ`]. Call once, after paging and the IDT are up and the PICs are masked; interrupts
-/// may stay disabled — the timer simply queues its first tick.
+/// Enables the local APIC, calibrates its timer against `hpet` (or the PIT when absent), and starts
+/// it periodic at [`TIMER_HZ`]. The PIT measurement is retained as an independent reference. Call
+/// once, after paging and the IDT are up and the PICs are masked; interrupts may stay disabled —
+/// the timer simply queues its first tick.
 ///
 /// # Panics
-/// If the register page cannot be mapped, or the calibration measures nothing (no working APIC
-/// timer, or the PIT never fired).
-pub fn init() -> Info {
+/// If the register page cannot be mapped, or either calibration measures no APIC timer ticks.
+pub fn init(hpet: Option<&Hpet>) -> Info {
     let mut msr = Msr::new(IA32_APIC_BASE);
     // SAFETY: IA32_APIC_BASE exists on every x86_64 CPU; we only set the global-enable bit and
     // keep the base the firmware chose.
@@ -110,16 +119,14 @@ pub fn init() -> Info {
     write(REG_LVT_TIMER, LVT_MASKED);
     write(REG_TIMER_DIVIDE, DIVIDE_BY_16);
 
-    // Calibrate: let the timer count down from max while the PIT measures CALIBRATION_MS.
-    write(REG_TIMER_INITIAL, u32::MAX);
-    pit::busy_wait_ms(CALIBRATION_MS);
-    let elapsed = u32::MAX - read(REG_TIMER_CURRENT);
-    write(REG_TIMER_INITIAL, 0);
-    let ticks_per_ms = elapsed / CALIBRATION_MS as u32;
-    assert!(
-        ticks_per_ms > 0,
-        "APIC timer did not count during calibration"
-    );
+    let pit_ticks_per_ms = calibrate(pit::busy_wait_ms);
+    let hpet_ticks_per_ms = hpet.map(|clock| calibrate(|ms| clock.busy_wait_ms(ms)));
+    let ticks_per_ms = hpet_ticks_per_ms.unwrap_or(pit_ticks_per_ms);
+    #[cfg(test)]
+    {
+        HPET_TICKS_PER_MS.store(u64::from(hpet_ticks_per_ms.unwrap_or(0)), Ordering::Relaxed);
+        PIT_TICKS_PER_MS.store(u64::from(pit_ticks_per_ms), Ordering::Relaxed);
+    }
 
     // 1 kHz periodic on TIMER_VECTOR.
     TICKS.store(0, Ordering::Relaxed);
@@ -130,7 +137,32 @@ pub fn init() -> Info {
         phys_base,
         id: read(REG_ID) >> 24,
         ticks_per_ms,
+        hpet_ticks_per_ms,
+        pit_ticks_per_ms,
     }
+}
+
+fn calibrate(wait: impl FnOnce(u64)) -> u32 {
+    write(REG_TIMER_INITIAL, u32::MAX);
+    wait(CALIBRATION_MS);
+    let elapsed = u32::MAX - read(REG_TIMER_CURRENT);
+    write(REG_TIMER_INITIAL, 0);
+    let ticks_per_ms = elapsed / CALIBRATION_MS as u32;
+    assert!(
+        ticks_per_ms > 0,
+        "APIC timer did not count during calibration"
+    );
+    ticks_per_ms
+}
+
+/// Returns the HPET and PIT calibration measurements captured during [`init`].
+#[cfg(test)]
+pub(crate) fn calibration_ticks_per_ms() -> (Option<u32>, u32) {
+    let hpet = HPET_TICKS_PER_MS.load(Ordering::Relaxed) as u32;
+    (
+        (hpet != 0).then_some(hpet),
+        PIT_TICKS_PER_MS.load(Ordering::Relaxed) as u32,
+    )
 }
 
 /// This CPU's local APIC id.
