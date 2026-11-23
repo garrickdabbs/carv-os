@@ -421,6 +421,9 @@ Details:
   third-party toolchain action is needed. `--locked` everywhere; `Cargo.lock` is committed.
 - **Caching:** `Swatinem/rust-cache` keyed on the lockfile and toolchain; Limine binaries are fetched
   by **pinned release tag + SHA-256** that `xtask` verifies before use (never "latest").
+- **Action updates:** the grouped workflow bump uses `rust-cache` 2.9.3, `upload-artifact` 7.0.2,
+  `download-artifact` 8.0.2, CodeQL 4.39.4, Scorecard 2.6.0, `cargo-deny-action` 2.1.3,
+  `install-action` 2.90.6, and `cosign-installer` 4.1.3, each pinned to a full commit SHA.
 - **KVM on GitHub-hosted Linux runners** (nested virtualization is available on `ubuntu-latest`):
   ```
   echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
