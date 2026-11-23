@@ -7,6 +7,8 @@ Every PR adds a line under *Unreleased*; the release PR moves them under a versi
 ## [Unreleased]
 
 ### Fixed
+- Nightly: bump the transitive `rustix` 1.1.5 → 1.1.6 in `Cargo.lock` to pick up the fix for RUSTSEC-2026-0486
+  (unsound xattr functions), which made `cargo audit --deny warnings` fail the nightly run (#166).
 - P3.1: `carv-rt` heap host tests no longer perform direct raw-pointer writes, which removes
   CodeQL's false-positive invalid-pointer alerts while preserving growth, reuse, alignment and
   allocation-failure coverage (#67).
